@@ -1,0 +1,108 @@
+from __future__ import annotations
+
+import hashlib
+import json
+import logging
+import time
+from contextlib import contextmanager
+from typing import Any, Iterator
+
+from prometheus_client import Counter, Gauge, Histogram
+
+
+logger = logging.getLogger("qq_group_chatter")
+
+
+MESSAGES_TOTAL = Counter(
+    "qq_bot_messages_total",
+    "Messages handled by the bot.",
+    ["conversation_type", "result"],
+)
+RESPONSE_LATENCY_SECONDS = Histogram(
+    "qq_bot_response_latency_seconds",
+    "End-to-end response latency.",
+)
+LLM_LATENCY_SECONDS = Histogram(
+    "qq_bot_llm_latency_seconds",
+    "LLM call latency.",
+    ["component"],
+)
+MEM0_SEARCH_LATENCY_SECONDS = Histogram(
+    "qq_bot_mem0_search_latency_seconds",
+    "Mem0 search latency.",
+    ["scope"],
+)
+MEM0_ADD_LATENCY_SECONDS = Histogram(
+    "qq_bot_mem0_add_latency_seconds",
+    "Mem0 add latency.",
+    ["scope"],
+)
+MEM0_ADD_TOTAL = Counter(
+    "qq_bot_mem0_add_total",
+    "Mem0 add attempts.",
+    ["scope", "result"],
+)
+MEMORY_INGESTION_QUEUE_SIZE = Gauge(
+    "qq_bot_memory_ingestion_queue_size",
+    "Pending long-term memory ingestion jobs.",
+)
+MEMORY_CANDIDATES_TOTAL = Counter(
+    "qq_bot_memory_candidates_total",
+    "Long-term memory candidates.",
+    ["scope", "kind", "result"],
+)
+MEMORY_DUPLICATE_SKIPS_TOTAL = Counter(
+    "qq_bot_memory_duplicate_skips_total",
+    "Duplicate long-term memory candidates skipped.",
+    ["scope"],
+)
+ERRORS_TOTAL = Counter(
+    "qq_bot_errors_total",
+    "Errors by stage and type.",
+    ["stage", "error_type"],
+)
+
+
+def hash_identifier(value: str | None) -> str | None:
+    if value is None:
+        return None
+    return hashlib.sha256(value.encode("utf-8")).hexdigest()[:12]
+
+
+def log_event(event: str, **fields: Any) -> None:
+    payload = {"event": event, **fields}
+    logger.info(json.dumps(payload, ensure_ascii=False, default=str))
+
+
+def record_error(stage: str, error: BaseException) -> None:
+    ERRORS_TOTAL.labels(stage=stage, error_type=type(error).__name__).inc()
+    logger.exception(
+        "stage=%s error_type=%s message=%s",
+        stage,
+        type(error).__name__,
+        error,
+    )
+
+
+@contextmanager
+def observe_duration(
+    *,
+    metric: Histogram,
+    log_name: str,
+    labels: dict[str, str] | None = None,
+    log_fields: dict[str, Any] | None = None,
+) -> Iterator[None]:
+    start = time.perf_counter()
+    try:
+        yield
+    finally:
+        duration = time.perf_counter() - start
+        if labels:
+            metric.labels(**labels).observe(duration)
+        else:
+            metric.observe(duration)
+        log_event(
+            log_name,
+            duration_ms=round(duration * 1000, 3),
+            **(log_fields or {}),
+        )
