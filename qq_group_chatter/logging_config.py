@@ -12,7 +12,7 @@ PROJECT_LOGGER_NAME = "qq_group_chatter"
 
 def configure_runtime_logging() -> None:
     project_level = _read_level("QQ_GROUP_CHATTER_LOG_LEVEL", logging.INFO)
-    framework_level = _read_level("QQ_GROUP_CHATTER_FRAMEWORK_LOG_LEVEL", logging.WARNING)
+    framework_level = _read_level("QQ_GROUP_CHATTER_FRAMEWORK_LOG_LEVEL", logging.INFO)
     configure_project_logging(project_level)
     configure_loguru_logging(
         project_min_level=project_level,

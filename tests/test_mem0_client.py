@@ -1,3 +1,4 @@
+import os
 import sys
 from types import SimpleNamespace
 
@@ -28,6 +29,7 @@ class BrokenMemory:
 def test_default_mem0_client_uses_mem0_when_deepseek_key_exists(monkeypatch):
     FakeMemory.created.clear()
     monkeypatch.setenv("DEEPSEEK_API_KEY", "secret")
+    monkeypatch.delenv("MEM0_DIR", raising=False)
     monkeypatch.setitem(sys.modules, "mem0", SimpleNamespace(Memory=FakeMemory))
 
     client = create_default_mem0_client()
@@ -40,6 +42,10 @@ def test_default_mem0_client_uses_mem0_when_deepseek_key_exists(monkeypatch):
     assert client["config"]["embedder"]["provider"] == "fastembed"
     assert client["config"]["embedder"]["config"]["model"] == "BAAI/bge-small-zh-v1.5"
     assert client["config"]["vector_store"]["config"]["embedding_model_dims"] == 512
+    assert client["config"]["history_db_path"].endswith(".mem0\\history.db") or client["config"][
+        "history_db_path"
+    ].endswith(".mem0/history.db")
+    assert "MEM0_DIR" in os.environ
 
 
 def test_default_mem0_client_wraps_mem0_initialization_errors(monkeypatch):

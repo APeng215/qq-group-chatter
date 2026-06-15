@@ -1,4 +1,8 @@
-from qq_group_chatter.agent.deepseek_llm import DeepSeekChatLLM, create_deepseek_chat_llm
+from qq_group_chatter.agent.deepseek_llm import (
+    DeepSeekChatLLM,
+    _read_dotenv_key,
+    create_deepseek_chat_llm,
+)
 
 
 class FakeAsyncClient:
@@ -86,3 +90,20 @@ def test_factory_reads_key_from_dotenv_file(monkeypatch):
 
     assert llm is not None
     assert llm.api_key == "from-dotenv"
+
+
+def test_read_dotenv_key_allows_utf8_bom(monkeypatch):
+    class FakePath:
+        def __init__(self, path):
+            self.path = path
+
+        def exists(self):
+            return True
+
+        def read_text(self, *, encoding):
+            assert encoding == "utf-8-sig"
+            return "DEEPSEEK_API_KEY=from-bom-dotenv\n"
+
+    monkeypatch.setattr("qq_group_chatter.agent.deepseek_llm.Path", FakePath)
+
+    assert _read_dotenv_key(path=".env") == "from-bom-dotenv"

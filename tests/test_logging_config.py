@@ -1,6 +1,7 @@
 import logging
 
 from qq_group_chatter.logging_config import (
+    configure_runtime_logging,
     configure_project_logging,
     should_emit_loguru_record,
 )
@@ -49,6 +50,36 @@ def test_project_info_is_visible_when_framework_level_is_warning():
         )
         is True
     )
+
+
+def test_runtime_logging_defaults_show_framework_info(monkeypatch):
+    calls = {}
+    monkeypatch.delenv("QQ_GROUP_CHATTER_LOG_LEVEL", raising=False)
+    monkeypatch.delenv("QQ_GROUP_CHATTER_FRAMEWORK_LOG_LEVEL", raising=False)
+
+    def fake_configure_project_logging(level):
+        calls["project_level"] = level
+
+    def fake_configure_loguru_logging(*, project_min_level, framework_min_level):
+        calls["project_min_level"] = project_min_level
+        calls["framework_min_level"] = framework_min_level
+
+    monkeypatch.setattr(
+        "qq_group_chatter.logging_config.configure_project_logging",
+        fake_configure_project_logging,
+    )
+    monkeypatch.setattr(
+        "qq_group_chatter.logging_config.configure_loguru_logging",
+        fake_configure_loguru_logging,
+    )
+
+    configure_runtime_logging()
+
+    assert calls == {
+        "project_level": logging.INFO,
+        "project_min_level": logging.INFO,
+        "framework_min_level": logging.INFO,
+    }
 
 
 def test_project_marker_is_visible_when_record_name_is_not_preserved():

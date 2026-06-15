@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import re
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 from qq_group_chatter.agent.chat_agent import ChatAgent
@@ -62,6 +63,9 @@ def create_default_mem0_client() -> Any:
             "DEEPSEEK_API_KEY is required to enable Mem0 long-term memory."
         )
 
+    mem0_dir = Path(os.getenv("MEM0_DIR", ".mem0")).resolve()
+    os.environ.setdefault("MEM0_DIR", str(mem0_dir))
+
     try:
         from mem0 import Memory
     except ImportError as exc:
@@ -104,6 +108,7 @@ def create_default_mem0_client() -> Any:
                 "path": ".mem0/qdrant",
             },
         },
+        "history_db_path": str(mem0_dir / "history.db"),
     }
     try:
         return Memory.from_config(config)
