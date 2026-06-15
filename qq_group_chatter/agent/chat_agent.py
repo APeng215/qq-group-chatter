@@ -29,7 +29,7 @@ class ChatAgent:
             long_term_memory=long_term_memory,
         )
         if self._llm is None:
-            return "我现在还没有配置聊天模型。"
+            return "\u6211\u73b0\u5728\u8fd8\u6ca1\u6709\u914d\u7f6e\u804a\u5929\u6a21\u578b\u3002"
         with observe_duration(
             metric=LLM_LATENCY_SECONDS,
             labels={"component": "chat_agent"},
@@ -68,12 +68,14 @@ class ChatAgent:
             f"{item.nickname or item.role}: {item.content}" for item in short_term_messages
         )
         return (
-            "你是 QQ 聊天机器人。根据当前会话上下文和长期记忆自然回复。\n\n"
+            "\u4f60\u662f QQ \u804a\u5929\u673a\u5668\u4eba\u3002"
+            "\u6839\u636e\u5f53\u524d\u4f1a\u8bdd\u4e0a\u4e0b\u6587\u548c"
+            "\u957f\u671f\u8bb0\u5fc6\u81ea\u7136\u56de\u590d\u3002\n\n"
             f"conversation_type: {context.conversation_type}\n"
             f"{long_term_memory.as_prompt_section()}\n\n"
-            "短期会话上下文：\n"
-            f"{history or '无'}\n\n"
-            f"当前用户消息：{user_message}"
+            "\u77ed\u671f\u4f1a\u8bdd\u4e0a\u4e0b\u6587\uff1a\n"
+            f"{history or '\u65e0'}\n\n"
+            f"\u5f53\u524d\u7528\u6237\u6d88\u606f\uff1a{user_message}"
         )
 
     def _content(self, raw: Any) -> str:

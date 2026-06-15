@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 from qq_group_chatter.agent.chat_agent import ChatAgent
+from qq_group_chatter.agent.deepseek_llm import create_deepseek_chat_llm
 from qq_group_chatter.orchestrator import ChatOrchestrator
 from qq_group_chatter.services.long_term_memory import LongTermMemoryService
 from qq_group_chatter.services.long_term_memory_extractor import LongTermMemoryExtractor
@@ -34,11 +35,12 @@ def create_default_orchestrator(
     extractor_llm: Any | None = None,
     mem0_client: Any | None = None,
 ) -> ChatOrchestrator:
+    resolved_chat_llm = chat_llm if chat_llm is not None else create_deepseek_chat_llm()
     return ChatOrchestrator(
         short_term_memory=ShortTermMemoryService(),
         long_term_memory=create_default_long_term_memory_service(
             mem0_client=mem0_client,
             extractor_llm=extractor_llm,
         ),
-        chat_agent=ChatAgent(llm=chat_llm),
+        chat_agent=ChatAgent(llm=resolved_chat_llm),
     )
