@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from time import time
 
+from qq_group_chatter.models import PendingAssistantReply
+from qq_group_chatter.observability import record_error
 from qq_group_chatter.orchestrator import ChatOrchestrator
 
 
@@ -33,12 +35,14 @@ if on_message is not None:
         if orchestrator is None:
             return
         text = event.get_plaintext()
+        if not should_handle_message(event, text):
+            return
         context = _context_from_event(event)
         if context is None:
             return
         reply = await orchestrator.handle_message(context=context, user_message=text)
         if reply:
-            await bot.send(event, reply)
+            await _send_reply_and_record(bot, event, reply, orchestrator)
 
 
 def _context_from_event(event) -> ConversationContext | None:
@@ -69,3 +73,33 @@ def _context_from_event(event) -> ConversationContext | None:
             timestamp=timestamp,
         )
     return None
+
+
+def should_handle_message(event, text: str) -> bool:
+    if not text.strip():
+        return False
+
+    user_id = str(getattr(event, "user_id", ""))
+    self_id = str(getattr(event, "self_id", ""))
+    if self_id and user_id == self_id:
+        return False
+
+    message_type = getattr(event, "message_type", None)
+    if message_type == "group" and not bool(getattr(event, "to_me", False)):
+        return False
+
+    return True
+
+
+async def _send_reply_and_record(
+    bot,
+    event,
+    reply: PendingAssistantReply,
+    orchestrator: ChatOrchestrator,
+) -> None:
+    try:
+        await bot.send(event, reply.content)
+    except Exception as exc:
+        record_error("send_reply", exc)
+        raise
+    await orchestrator.record_assistant_reply(reply)

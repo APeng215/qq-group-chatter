@@ -7,12 +7,13 @@ dependencies = [
   "nonebot2>=2.3.0",
   "nonebot-adapter-onebot>=2.4.0",
   "langchain-core>=0.3.0",
+  "fastembed>=0.4.0",
+  "mem0ai>=0.1.0",
   "openai>=2.0.0",
   "prometheus-client>=0.20.0",
 ]
 
 [project.optional-dependencies]
-mem0 = ["mem0ai>=0.1.0"]
 test = ["pytest>=8.0.0", "pytest-asyncio>=0.23.0"]
 
 [tool.pytest.ini_options]

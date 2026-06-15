@@ -1,33 +1,23 @@
 import subprocess
 import sys
 
-from qq_group_chatter.app import create_default_orchestrator
+from qq_group_chatter.app import ChatBotApplication, NoopMem0Client, create_default_orchestrator
 from qq_group_chatter.models import build_private_conversation_context
 
 
-async def test_default_orchestrator_can_reply_without_external_clients():
-    # Run away from the project root .env so this unit test never makes network calls.
-    import os
-    from pathlib import Path
+async def test_default_orchestrator_can_reply_without_external_clients(monkeypatch):
+    monkeypatch.setattr("qq_group_chatter.app.create_deepseek_chat_llm", lambda **kwargs: None)
+    orchestrator = create_default_orchestrator(mem0_client=NoopMem0Client())
+    context = build_private_conversation_context(
+        user_id=123456,
+        message_id="m1",
+        nickname="阿咳",
+        timestamp=123.0,
+    )
 
-    old_cwd = Path.cwd()
-    test_cwd = Path("tests/.tmp/no_env_app")
-    test_cwd.mkdir(parents=True, exist_ok=True)
-    os.chdir(test_cwd)
-    orchestrator = create_default_orchestrator()
-    try:
-        context = build_private_conversation_context(
-            user_id=123456,
-            message_id="m1",
-            nickname="阿咳",
-            timestamp=123.0,
-        )
+    pending_reply = await orchestrator.handle_message(context=context, user_message="你好")
 
-        reply = await orchestrator.handle_message(context=context, user_message="你好")
-
-        assert reply == "我现在还没有配置聊天模型。"
-    finally:
-        os.chdir(old_cwd)
+    assert pending_reply.content == "我现在还没有配置聊天模型。"
 
 
 def test_app_import_does_not_import_nonebot_plugin():
@@ -50,7 +40,38 @@ def test_app_import_does_not_import_nonebot_plugin():
 def test_default_orchestrator_uses_deepseek_when_key_exists(monkeypatch):
     monkeypatch.setenv("DEEPSEEK_API_KEY", "secret")
 
-    orchestrator = create_default_orchestrator()
+    orchestrator = create_default_orchestrator(mem0_client=NoopMem0Client())
 
     assert orchestrator._chat_agent._llm.model == "deepseek-v4-pro"
     assert orchestrator._chat_agent._llm.thinking == "disabled"
+
+
+class FakeLongTermMemory:
+    def __init__(self):
+        self.started = 0
+        self.stopped = 0
+
+    async def start(self):
+        self.started += 1
+
+    async def stop(self):
+        self.stopped += 1
+
+
+class FakeOrchestrator:
+    def __init__(self):
+        self.long_term_memory = FakeLongTermMemory()
+
+
+async def test_chat_bot_application_starts_and_stops_long_term_memory():
+    orchestrator = FakeOrchestrator()
+    app = ChatBotApplication(
+        orchestrator=orchestrator,
+        long_term_memory=orchestrator.long_term_memory,
+    )
+
+    await app.start()
+    await app.stop()
+
+    assert orchestrator.long_term_memory.started == 1
+    assert orchestrator.long_term_memory.stopped == 1

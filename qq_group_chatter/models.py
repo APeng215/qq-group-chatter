@@ -54,17 +54,26 @@ class LongTermMemoryIngestionJob:
 
 
 @dataclass(frozen=True)
+class PendingAssistantReply:
+    context: ConversationContext
+    content: str
+    timestamp: float
+
+
+@dataclass(frozen=True)
 class LongTermMemoryBundle:
     user_memories: list[str]
     conversation_memories: list[str]
 
     def as_prompt_section(self) -> str:
-        user_lines = "\n".join(f"- {item}" for item in self.user_memories) or "- 无"
-        conversation_lines = "\n".join(f"- {item}" for item in self.conversation_memories) or "- 无"
+        user_lines = "\n".join(f"- {item}" for item in self.user_memories) or "- \u65e0"
+        conversation_lines = (
+            "\n".join(f"- {item}" for item in self.conversation_memories) or "- \u65e0"
+        )
         return (
-            "相关个人长期记忆：\n"
+            "\u76f8\u5173\u4e2a\u4eba\u957f\u671f\u8bb0\u5fc6\uff1a\n"
             f"{user_lines}\n\n"
-            "相关会话长期记忆：\n"
+            "\u76f8\u5173\u4f1a\u8bdd\u957f\u671f\u8bb0\u5fc6\uff1a\n"
             f"{conversation_lines}"
         )
 
@@ -114,4 +123,3 @@ def user_memory_id(context: ConversationContext) -> str:
 
 def conversation_memory_id(context: ConversationContext) -> str:
     return f"qq_conversation:{context.conversation_id}"
-

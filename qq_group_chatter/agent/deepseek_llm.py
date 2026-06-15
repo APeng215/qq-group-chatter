@@ -69,7 +69,7 @@ def create_deepseek_chat_llm(
     )
 
 
-def _read_dotenv_key(path: str = ".env") -> str | None:
+def _read_dotenv_key(name: str = "DEEPSEEK_API_KEY", path: str = ".env") -> str | None:
     env_path = Path(path)
     if not env_path.exists():
         return None
@@ -78,6 +78,6 @@ def _read_dotenv_key(path: str = ".env") -> str | None:
         if not line or line.startswith("#") or "=" not in line:
             continue
         key, value = line.split("=", 1)
-        if key.strip() == "DEEPSEEK_API_KEY":
+        if key.strip() == name:
             return value.strip().strip('"').strip("'") or None
     return None

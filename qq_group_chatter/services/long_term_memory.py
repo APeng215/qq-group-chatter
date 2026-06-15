@@ -55,12 +55,12 @@ class LongTermMemoryService:
             self._worker = asyncio.create_task(self._run_worker())
 
     async def stop(self) -> None:
-        if self._worker is None:
-            return
-        await self._queue.put(None)
-        await self._worker
-        self._worker = None
-        MEMORY_INGESTION_QUEUE_SIZE.set(self._queue.qsize())
+        if self._worker is not None:
+            await self._queue.put(None)
+            await self._worker
+            self._worker = None
+            MEMORY_INGESTION_QUEUE_SIZE.set(self._queue.qsize())
+        await self._close_mem0()
 
     async def join(self) -> None:
         await self._queue.join()
@@ -96,6 +96,21 @@ class LongTermMemoryService:
             finally:
                 self._queue.task_done()
                 MEMORY_INGESTION_QUEUE_SIZE.set(self._queue.qsize())
+
+    async def _close_mem0(self) -> None:
+        await self._call_close(getattr(self._mem0, "close", None), stage="mem0_close")
+        vector_client = getattr(getattr(self._mem0, "vector_store", None), "client", None)
+        await self._call_close(getattr(vector_client, "close", None), stage="mem0_vector_store_close")
+
+    async def _call_close(self, close: Any, *, stage: str) -> None:
+        if close is None:
+            return
+        try:
+            result = close()
+            if hasattr(result, "__await__"):
+                await result
+        except Exception as exc:
+            record_error(stage, exc)
 
     async def _process_job(self, job: LongTermMemoryIngestionJob) -> None:
         candidates = await self._extractor.extract(
@@ -154,6 +169,7 @@ class LongTermMemoryService:
                     [{"role": "user", "content": candidate.content}],
                     user_id=target_id,
                     metadata=metadata,
+                    infer=False,
                 )
             MEM0_ADD_TOTAL.labels(scope=candidate.scope, result="success").inc()
             MEMORY_CANDIDATES_TOTAL.labels(
@@ -172,19 +188,23 @@ class LongTermMemoryService:
         scope: str,
         limit: int = 5,
     ) -> list[str]:
-        with observe_duration(
-            metric=MEM0_SEARCH_LATENCY_SECONDS,
-            labels={"scope": scope},
-            log_name="mem0_search",
-            log_fields={"memory_scope": scope},
-        ):
-            raw = await asyncio.to_thread(
-                self._mem0.search,
-                query,
-                filters={"user_id": memory_id},
-                limit=limit,
-            )
-        return normalize_mem0_memories(raw)
+        try:
+            with observe_duration(
+                metric=MEM0_SEARCH_LATENCY_SECONDS,
+                labels={"scope": scope},
+                log_name="mem0_search",
+                log_fields={"memory_scope": scope},
+            ):
+                raw = await asyncio.to_thread(
+                    self._mem0.search,
+                    query,
+                    filters={"user_id": memory_id},
+                    top_k=limit,
+                )
+            return normalize_mem0_memories(raw)
+        except Exception as exc:
+            record_error("mem0_search", exc)
+            return []
 
     def _is_valid_candidate(self, candidate: LongTermMemoryCandidate) -> bool:
         if candidate.scope not in {"user", "conversation"}:

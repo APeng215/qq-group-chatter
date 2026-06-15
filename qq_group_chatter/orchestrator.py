@@ -7,6 +7,7 @@ from qq_group_chatter.models import (
     ChatMessage,
     ConversationContext,
     LongTermMemoryIngestionJob,
+    PendingAssistantReply,
 )
 from qq_group_chatter.observability import (
     MESSAGES_TOTAL,
@@ -59,7 +60,7 @@ class ChatOrchestrator:
         *,
         context: ConversationContext,
         user_message: str,
-    ) -> str | None:
+    ) -> PendingAssistantReply | None:
         content = user_message.strip()
         if not content:
             MESSAGES_TOTAL.labels(
@@ -105,22 +106,11 @@ class ChatOrchestrator:
                     short_term_messages=short_term_messages,
                     long_term_memory=long_term_memory,
                 )
-                await self._short_term_memory.add_message(
-                    ChatMessage(
-                        conversation_id=context.conversation_id,
-                        role="assistant",
-                        content=reply,
-                        user_id=None,
-                        nickname=None,
-                        message_id=None,
-                        timestamp=time(),
-                    )
+                return PendingAssistantReply(
+                    context=context,
+                    content=reply,
+                    timestamp=time(),
                 )
-                MESSAGES_TOTAL.labels(
-                    conversation_type=context.conversation_type,
-                    result="replied",
-                ).inc()
-                return reply
             except Exception as exc:
                 MESSAGES_TOTAL.labels(
                     conversation_type=context.conversation_type,
@@ -129,3 +119,19 @@ class ChatOrchestrator:
                 record_error("chat_orchestrator", exc)
                 raise
 
+    async def record_assistant_reply(self, reply: PendingAssistantReply) -> None:
+        await self._short_term_memory.add_message(
+            ChatMessage(
+                conversation_id=reply.context.conversation_id,
+                role="assistant",
+                content=reply.content,
+                user_id=None,
+                nickname=None,
+                message_id=None,
+                timestamp=reply.timestamp,
+            )
+        )
+        MESSAGES_TOTAL.labels(
+            conversation_type=reply.context.conversation_type,
+            result="replied",
+        ).inc()

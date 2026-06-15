@@ -35,7 +35,7 @@ class FakeResponder:
         return "好的"
 
 
-async def test_orchestrator_writes_short_term_then_enqueues_and_replies():
+async def test_orchestrator_returns_pending_reply_without_recording_assistant_message():
     short_term = ShortTermMemoryService(max_messages_per_conversation=10)
     long_term = FakeLongTermMemory()
     responder = FakeResponder()
@@ -52,13 +52,37 @@ async def test_orchestrator_writes_short_term_then_enqueues_and_replies():
         timestamp=123.0,
     )
 
-    reply = await orchestrator.handle_message(context=context, user_message="我不吃辣")
+    pending_reply = await orchestrator.handle_message(context=context, user_message="我不吃辣")
 
-    assert reply == "好的"
+    assert pending_reply is not None
+    assert pending_reply.content == "好的"
     assert long_term.enqueued[0].user_message == "我不吃辣"
     assert long_term.search_calls[0]["user_message"] == "我不吃辣"
     assert [item.content for item in responder.calls[0]["short_term_messages"]] == ["我不吃辣"]
     assert responder.calls[0]["long_term_memory"].user_memories == ["用户不吃辣"]
+    assert [item.content for item in await short_term.get_recent("qq_group:888888")] == ["我不吃辣"]
+
+
+async def test_orchestrator_records_assistant_message_after_send_success():
+    short_term = ShortTermMemoryService(max_messages_per_conversation=10)
+    long_term = FakeLongTermMemory()
+    responder = FakeResponder()
+    orchestrator = ChatOrchestrator(
+        short_term_memory=short_term,
+        long_term_memory=long_term,
+        chat_agent=responder,
+    )
+    context = build_group_conversation_context(
+        group_id=888888,
+        user_id=123456,
+        message_id="m1",
+        nickname="阿咳",
+        timestamp=123.0,
+    )
+
+    pending_reply = await orchestrator.handle_message(context=context, user_message="我不吃辣")
+    await orchestrator.record_assistant_reply(pending_reply)
+
     assert [item.content for item in await short_term.get_recent("qq_group:888888")] == [
         "我不吃辣",
         "好的",

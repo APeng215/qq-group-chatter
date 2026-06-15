@@ -1,6 +1,3 @@
-import pytest
-from pathlib import Path
-
 from qq_group_chatter.agent.deepseek_llm import DeepSeekChatLLM, create_deepseek_chat_llm
 
 
@@ -53,21 +50,29 @@ def test_factory_uses_env_key_and_default_model(monkeypatch):
     assert llm.thinking == "disabled"
 
 
+def test_factory_allows_flash_for_background_tasks(monkeypatch):
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "secret")
+
+    llm = create_deepseek_chat_llm(model="deepseek-v4-flash")
+
+    assert llm is not None
+    assert llm.model == "deepseek-v4-flash"
+    assert llm.thinking == "disabled"
+
+
 def test_factory_returns_none_when_key_missing(monkeypatch):
     monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
-    temp_dir = Path("tests/.tmp/no_env_deepseek")
-    temp_dir.mkdir(parents=True, exist_ok=True)
-    monkeypatch.chdir(temp_dir)
+    monkeypatch.setattr("qq_group_chatter.agent.deepseek_llm._read_dotenv_key", lambda: None)
 
     assert create_deepseek_chat_llm() is None
 
 
 def test_factory_reads_key_from_dotenv_file(monkeypatch):
     monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
-    temp_dir = Path("tests/.tmp/deepseek_env_case")
-    temp_dir.mkdir(parents=True, exist_ok=True)
-    temp_dir.joinpath(".env").write_text("DEEPSEEK_API_KEY=from-dotenv\n", encoding="utf-8")
-    monkeypatch.chdir(temp_dir)
+    monkeypatch.setattr(
+        "qq_group_chatter.agent.deepseek_llm._read_dotenv_key",
+        lambda: "from-dotenv",
+    )
 
     llm = create_deepseek_chat_llm()
 

@@ -1,21 +1,100 @@
 from __future__ import annotations
 
+import os
+from dataclasses import dataclass
 from typing import Any
 
 from qq_group_chatter.agent.chat_agent import ChatAgent
-from qq_group_chatter.agent.deepseek_llm import create_deepseek_chat_llm
+from qq_group_chatter.agent.deepseek_llm import create_deepseek_chat_llm, _read_dotenv_key
 from qq_group_chatter.orchestrator import ChatOrchestrator
 from qq_group_chatter.services.long_term_memory import LongTermMemoryService
 from qq_group_chatter.services.long_term_memory_extractor import LongTermMemoryExtractor
 from qq_group_chatter.services.short_term_memory import ShortTermMemoryService
 
 
+class MemoryConfigurationError(RuntimeError):
+    pass
+
+
 class NoopMem0Client:
-    def search(self, query: str, *, filters: dict[str, Any] | None = None, limit: int | None = None):
+    enabled = False
+
+    def search(self, query: str, *, filters: dict[str, Any] | None = None, top_k: int | None = None):
         return []
 
-    def add(self, messages, *, user_id: str, metadata: dict[str, Any] | None = None):
+    def add(
+        self,
+        messages,
+        *,
+        user_id: str,
+        metadata: dict[str, Any] | None = None,
+        infer: bool = True,
+    ):
         return {"id": None}
+
+
+@dataclass
+class ChatBotApplication:
+    orchestrator: ChatOrchestrator
+    long_term_memory: LongTermMemoryService
+
+    async def start(self) -> None:
+        await self.long_term_memory.start()
+
+    async def stop(self) -> None:
+        await self.long_term_memory.stop()
+
+
+def create_default_mem0_client() -> Any:
+    deepseek_key = os.getenv("DEEPSEEK_API_KEY") or _read_dotenv_key()
+    if not deepseek_key:
+        raise MemoryConfigurationError(
+            "DEEPSEEK_API_KEY is required to enable Mem0 long-term memory."
+        )
+
+    try:
+        from mem0 import Memory
+    except ImportError as exc:
+        raise MemoryConfigurationError(
+            "The 'mem0ai' package is required to enable Mem0 long-term memory."
+        ) from exc
+
+    embedder_config: dict[str, Any] = {
+        "provider": "fastembed",
+        "config": {
+            "model": os.getenv("MEM0_FASTEMBED_MODEL")
+            or _read_dotenv_key("MEM0_FASTEMBED_MODEL")
+            or "BAAI/bge-small-zh-v1.5",
+        },
+    }
+
+    config = {
+        "llm": {
+            "provider": "deepseek",
+            "config": {
+                "api_key": deepseek_key,
+                "model": "deepseek-v4-flash",
+                "temperature": 0.0,
+                "max_tokens": 1000,
+                "deepseek_base_url": "https://api.deepseek.com",
+            },
+        },
+        "embedder": embedder_config,
+        "vector_store": {
+            "provider": "qdrant",
+            "config": {
+                "collection_name": "qq_group_chatter_memories",
+                "path": ".mem0/qdrant",
+            },
+        },
+    }
+    try:
+        return Memory.from_config(config)
+    except Exception as exc:
+        raise MemoryConfigurationError(
+            "Failed to initialize Mem0 long-term memory. "
+            "Install configured dependencies and make sure the fastembed model is available."
+        ) from exc
 
 
 def create_default_long_term_memory_service(
@@ -23,9 +102,14 @@ def create_default_long_term_memory_service(
     mem0_client: Any | None = None,
     extractor_llm: Any | None = None,
 ) -> LongTermMemoryService:
+    resolved_extractor_llm = (
+        extractor_llm
+        if extractor_llm is not None
+        else create_deepseek_chat_llm(model="deepseek-v4-flash")
+    )
     return LongTermMemoryService(
-        mem0_client=mem0_client or NoopMem0Client(),
-        extractor=LongTermMemoryExtractor(llm=extractor_llm),
+        mem0_client=mem0_client or create_default_mem0_client(),
+        extractor=LongTermMemoryExtractor(llm=resolved_extractor_llm),
     )
 
 
@@ -35,6 +119,11 @@ def create_default_orchestrator(
     extractor_llm: Any | None = None,
     mem0_client: Any | None = None,
 ) -> ChatOrchestrator:
+    """Create an orchestrator for tests or custom wiring.
+
+    Production entrypoints should use create_default_application() so the
+    long-term memory worker is started and stopped with the bot lifecycle.
+    """
     resolved_chat_llm = chat_llm if chat_llm is not None else create_deepseek_chat_llm()
     return ChatOrchestrator(
         short_term_memory=ShortTermMemoryService(),
@@ -43,4 +132,26 @@ def create_default_orchestrator(
             extractor_llm=extractor_llm,
         ),
         chat_agent=ChatAgent(llm=resolved_chat_llm),
+    )
+
+
+def create_default_application(
+    *,
+    chat_llm: Any | None = None,
+    extractor_llm: Any | None = None,
+    mem0_client: Any | None = None,
+) -> ChatBotApplication:
+    resolved_chat_llm = chat_llm if chat_llm is not None else create_deepseek_chat_llm()
+    long_term_memory = create_default_long_term_memory_service(
+        mem0_client=mem0_client,
+        extractor_llm=extractor_llm,
+    )
+    orchestrator = ChatOrchestrator(
+        short_term_memory=ShortTermMemoryService(),
+        long_term_memory=long_term_memory,
+        chat_agent=ChatAgent(llm=resolved_chat_llm),
+    )
+    return ChatBotApplication(
+        orchestrator=orchestrator,
+        long_term_memory=long_term_memory,
     )
