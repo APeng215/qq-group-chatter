@@ -9,6 +9,7 @@ from qq_group_chatter.prompt_loader import load_prompt
 ConversationType = Literal["group", "private"]
 MessageRole = Literal["user", "assistant"]
 MemoryScope = Literal["user", "conversation"]
+MemoryMergeAction = Literal["add", "update", "skip"]
 MemoryKind = Literal[
     "identity",
     "preference",
@@ -44,17 +45,46 @@ class ChatMessage:
 
 
 @dataclass(frozen=True)
-class LongTermMemoryCandidate:
-    scope: MemoryScope
+class LongTermMemoryRecord:
+    id: str | None
     content: str
-    confidence: float
+    metadata: dict[str, object]
+
+
+@dataclass(frozen=True)
+class LongTermMemoryOperation:
+    action: MemoryMergeAction
+    scope: MemoryScope
+    target_id: str | None
+    content: str
     kind: MemoryKind
+    confidence: float
+
+
+@dataclass(frozen=True)
+class LongTermMemoryBundle:
+    user_memories: list[LongTermMemoryRecord]
+    conversation_memories: list[LongTermMemoryRecord]
+
+    def as_prompt_section(self) -> str:
+        user_lines = "\n".join(
+            f"- {record.content}" for record in self.user_memories
+        ) or "- 无"
+        conversation_lines = (
+            "\n".join(f"- {record.content}" for record in self.conversation_memories)
+            or "- 无"
+        )
+        return LONG_TERM_MEMORY_SECTION_TEMPLATE.format(
+            user_memory_lines=user_lines,
+            conversation_memory_lines=conversation_lines,
+        )
 
 
 @dataclass(frozen=True)
 class LongTermMemoryIngestionJob:
     context: ConversationContext
     user_message: str
+    existing_memories: LongTermMemoryBundle | None = None
 
 
 @dataclass(frozen=True)
@@ -62,22 +92,6 @@ class PendingAssistantReply:
     context: ConversationContext
     content: str
     timestamp: float
-
-
-@dataclass(frozen=True)
-class LongTermMemoryBundle:
-    user_memories: list[str]
-    conversation_memories: list[str]
-
-    def as_prompt_section(self) -> str:
-        user_lines = "\n".join(f"- {item}" for item in self.user_memories) or "- \u65e0"
-        conversation_lines = (
-            "\n".join(f"- {item}" for item in self.conversation_memories) or "- \u65e0"
-        )
-        return LONG_TERM_MEMORY_SECTION_TEMPLATE.format(
-            user_memory_lines=user_lines,
-            conversation_memory_lines=conversation_lines,
-        )
 
 
 def build_group_conversation_context(

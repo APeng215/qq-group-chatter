@@ -1,30 +1,61 @@
 from qq_group_chatter.agent.chat_agent import ChatAgent
-from qq_group_chatter.models import LongTermMemoryBundle, build_group_conversation_context
+from qq_group_chatter.models import (
+    ChatMessage,
+    LongTermMemoryBundle,
+    LongTermMemoryRecord,
+    build_group_conversation_context,
+)
 from qq_group_chatter.orchestrator import ChatOrchestrator
 from qq_group_chatter.services.short_term_memory import ShortTermMemoryService
 
 
+class RecordingShortTermMemory:
+    def __init__(self, events):
+        self._events = events
+        self._inner = ShortTermMemoryService(max_messages_per_conversation=10)
+
+    async def add_message(self, message: ChatMessage) -> None:
+        self._events.append("short_term.add")
+        await self._inner.add_message(message)
+
+    async def get_recent(self, conversation_id: str, limit: int = 20) -> list[ChatMessage]:
+        self._events.append("short_term.get_recent")
+        return await self._inner.get_recent(conversation_id, limit=limit)
+
+
 class FakeLongTermMemory:
-    def __init__(self):
+    def __init__(self, events=None):
+        self.events = events
         self.enqueued = []
         self.search_calls = []
 
     async def enqueue_ingestion(self, job):
+        if self.events is not None:
+            self.events.append("long_term.enqueue")
         self.enqueued.append(job)
 
     async def search(self, user_message, context):
+        if self.events is not None:
+            self.events.append("long_term.search")
         self.search_calls.append({"user_message": user_message, "context": context})
         return LongTermMemoryBundle(
-            user_memories=["用户不吃辣"],
-            conversation_memories=["当前会话默认中文"],
+            user_memories=[
+                LongTermMemoryRecord(id="mem-user-1", content="用户不吃辣", metadata={})
+            ],
+            conversation_memories=[
+                LongTermMemoryRecord(id="mem-conv-1", content="当前会话默认中文", metadata={})
+            ],
         )
 
 
 class FakeResponder:
-    def __init__(self):
+    def __init__(self, events=None):
+        self.events = events
         self.calls = []
 
     async def generate_reply(self, *, user_message, context, short_term_messages, long_term_memory):
+        if self.events is not None:
+            self.events.append("agent.generate_reply")
         self.calls.append(
             {
                 "user_message": user_message,
@@ -36,9 +67,10 @@ class FakeResponder:
 
 
 async def test_orchestrator_returns_pending_reply_without_recording_assistant_message():
-    short_term = ShortTermMemoryService(max_messages_per_conversation=10)
-    long_term = FakeLongTermMemory()
-    responder = FakeResponder()
+    events = []
+    short_term = RecordingShortTermMemory(events)
+    long_term = FakeLongTermMemory(events)
+    responder = FakeResponder(events)
     orchestrator = ChatOrchestrator(
         short_term_memory=short_term,
         long_term_memory=long_term,
@@ -59,7 +91,15 @@ async def test_orchestrator_returns_pending_reply_without_recording_assistant_me
     assert long_term.enqueued[0].user_message == "我不吃辣"
     assert long_term.search_calls[0]["user_message"] == "我不吃辣"
     assert [item.content for item in responder.calls[0]["short_term_messages"]] == ["我不吃辣"]
-    assert responder.calls[0]["long_term_memory"].user_memories == ["用户不吃辣"]
+    assert responder.calls[0]["long_term_memory"].user_memories[0].content == "用户不吃辣"
+    assert long_term.enqueued[0].existing_memories is responder.calls[0]["long_term_memory"]
+    assert events == [
+        "short_term.add",
+        "short_term.get_recent",
+        "long_term.search",
+        "long_term.enqueue",
+        "agent.generate_reply",
+    ]
     assert [item.content for item in await short_term.get_recent("qq_group:888888")] == ["我不吃辣"]
 
 

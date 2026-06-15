@@ -12,7 +12,7 @@ from qq_group_chatter.models import (
 from qq_group_chatter.observability import (
     MESSAGES_TOTAL,
     RESPONSE_LATENCY_SECONDS,
-    hash_identifier,
+    conversation_log_fields,
     observe_duration,
     record_error,
 )
@@ -72,13 +72,7 @@ class ChatOrchestrator:
         with observe_duration(
             metric=RESPONSE_LATENCY_SECONDS,
             log_name="message_handled",
-            log_fields={
-                "conversation_id": context.conversation_id,
-                "conversation_type": context.conversation_type,
-                "user_id_hash": hash_identifier(context.user_id),
-                "group_id_hash": hash_identifier(context.group_id),
-                "message_id": context.message_id,
-            },
+            log_fields=conversation_log_fields(context),
         ):
             try:
                 await self._short_term_memory.add_message(
@@ -92,14 +86,18 @@ class ChatOrchestrator:
                         timestamp=context.timestamp,
                     )
                 )
-                await self._long_term_memory.enqueue_ingestion(
-                    LongTermMemoryIngestionJob(context=context, user_message=content)
-                )
                 short_term_messages = await self._short_term_memory.get_recent(
                     context.conversation_id,
                     limit=self._short_term_limit,
                 )
                 long_term_memory = await self._long_term_memory.search(content, context)
+                await self._long_term_memory.enqueue_ingestion(
+                    LongTermMemoryIngestionJob(
+                        context=context,
+                        user_message=content,
+                        existing_memories=long_term_memory,
+                    )
+                )
                 reply = await self._chat_agent.generate_reply(
                     user_message=content,
                     context=context,

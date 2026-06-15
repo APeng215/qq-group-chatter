@@ -1,6 +1,7 @@
 from qq_group_chatter.models import (
     ConversationContext,
     LongTermMemoryBundle,
+    LongTermMemoryRecord,
     build_group_conversation_context,
     build_private_conversation_context,
     conversation_memory_id,
@@ -46,7 +47,16 @@ def test_builds_private_conversation_context():
 
 
 def test_long_term_memory_bundle_renders_readable_prompt_section():
-    bundle = LongTermMemoryBundle(user_memories=[], conversation_memories=["默认中文"])
+    bundle = LongTermMemoryBundle(
+        user_memories=[],
+        conversation_memories=[
+            LongTermMemoryRecord(
+                id=None,
+                content="默认中文",
+                metadata={"private": "不应出现在 prompt"},
+            )
+        ],
+    )
 
     assert bundle.as_prompt_section() == (
         "相关个人长期记忆：\n"
@@ -54,3 +64,32 @@ def test_long_term_memory_bundle_renders_readable_prompt_section():
         "相关会话长期记忆：\n"
         "- 默认中文"
     )
+    assert "不应出现在 prompt" not in bundle.as_prompt_section()
+
+
+def test_long_term_memory_bundle_does_not_render_record_ids_or_metadata():
+    bundle = LongTermMemoryBundle(
+        user_memories=[
+            LongTermMemoryRecord(
+                id="mem-user-1",
+                content="用户不吃辣",
+                metadata={"source": "mem0"},
+            )
+        ],
+        conversation_memories=[
+            LongTermMemoryRecord(
+                id="mem-conv-1",
+                content="当前会话默认中文",
+                metadata={"scope": "conversation"},
+            )
+        ],
+    )
+
+    prompt_section = bundle.as_prompt_section()
+
+    assert "- 用户不吃辣" in prompt_section
+    assert "- 当前会话默认中文" in prompt_section
+    assert "mem-user-1" not in prompt_section
+    assert "mem-conv-1" not in prompt_section
+    assert "mem0" not in prompt_section
+    assert "conversation" not in prompt_section

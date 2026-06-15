@@ -8,7 +8,11 @@ from qq_group_chatter.models import (
     LongTermMemoryBundle,
 )
 from qq_group_chatter.agent.identity import BOT_IDENTITY_PROMPT
-from qq_group_chatter.observability import LLM_LATENCY_SECONDS, observe_duration
+from qq_group_chatter.observability import (
+    LLM_LATENCY_SECONDS,
+    conversation_log_fields,
+    observe_duration,
+)
 from qq_group_chatter.prompt_loader import load_prompt
 
 
@@ -41,9 +45,7 @@ class ChatAgent:
             log_name="llm_call",
             log_fields={
                 "component": "chat_agent",
-                "conversation_id": context.conversation_id,
-                "conversation_type": context.conversation_type,
-                "message_id": context.message_id,
+                **conversation_log_fields(context),
             },
         ):
             raw = await self._call_llm(prompt)

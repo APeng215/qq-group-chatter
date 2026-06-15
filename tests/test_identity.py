@@ -17,7 +17,7 @@ def test_prompt_files_are_loaded_from_prompt_directory():
         "bot_identity.txt",
         "chat_agent.txt",
         "deepseek_system.txt",
-        "long_term_memory_extractor.txt",
+        "long_term_memory_planner.txt",
         "long_term_memory_section.txt",
     ]:
         prompt_path = Path("qq_group_chatter/prompts") / name

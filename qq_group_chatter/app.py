@@ -9,7 +9,7 @@ from qq_group_chatter.agent.chat_agent import ChatAgent
 from qq_group_chatter.agent.deepseek_llm import create_deepseek_chat_llm, _read_dotenv_key
 from qq_group_chatter.orchestrator import ChatOrchestrator
 from qq_group_chatter.services.long_term_memory import LongTermMemoryService
-from qq_group_chatter.services.long_term_memory_extractor import LongTermMemoryExtractor
+from qq_group_chatter.services.long_term_memory_planner import LongTermMemoryPlanner
 from qq_group_chatter.services.short_term_memory import ShortTermMemoryService
 
 
@@ -32,6 +32,15 @@ class NoopMem0Client:
         infer: bool = True,
     ):
         return {"id": None}
+
+    def update(self, memory_id: str, data: str, metadata: dict[str, Any] | None = None):
+        return {"id": memory_id}
+
+    def delete(self, memory_id: str):
+        return {"id": memory_id}
+
+    def get_all(self, *, filters: dict[str, Any] | None = None, top_k: int = 20):
+        return {"results": []}
 
 
 @dataclass
@@ -65,7 +74,8 @@ def create_default_mem0_client() -> Any:
         or _read_dotenv_key("MEM0_FASTEMBED_MODEL")
         or "BAAI/bge-small-zh-v1.5"
     )
-    collection_name = f"qq_group_chatter_memories_{_collection_suffix(fastembed_model)}"
+    embedding_dims = _fastembed_model_dims(fastembed_model)
+    collection_name = f"qq_group_chatter_memories_{_collection_suffix(fastembed_model)}_{embedding_dims}d"
 
     embedder_config: dict[str, Any] = {
         "provider": "fastembed",
@@ -90,6 +100,7 @@ def create_default_mem0_client() -> Any:
             "provider": "qdrant",
             "config": {
                 "collection_name": collection_name,
+                "embedding_model_dims": embedding_dims,
                 "path": ".mem0/qdrant",
             },
         },
@@ -108,26 +119,39 @@ def _collection_suffix(model_name: str) -> str:
     return suffix or "default"
 
 
+def _fastembed_model_dims(model_name: str) -> int:
+    if model_name == "BAAI/bge-small-zh-v1.5":
+        return 512
+    try:
+        from fastembed import TextEmbedding
+
+        return TextEmbedding.get_embedding_size(model_name)
+    except Exception as exc:
+        raise MemoryConfigurationError(
+            f"Failed to resolve embedding dimensions for fastembed model '{model_name}'."
+        ) from exc
+
+
 def create_default_long_term_memory_service(
     *,
     mem0_client: Any | None = None,
-    extractor_llm: Any | None = None,
+    planner_llm: Any | None = None,
 ) -> LongTermMemoryService:
-    resolved_extractor_llm = (
-        extractor_llm
-        if extractor_llm is not None
+    resolved_planner_llm = (
+        planner_llm
+        if planner_llm is not None
         else create_deepseek_chat_llm(model="deepseek-v4-flash")
     )
     return LongTermMemoryService(
         mem0_client=mem0_client or create_default_mem0_client(),
-        extractor=LongTermMemoryExtractor(llm=resolved_extractor_llm),
+        planner=LongTermMemoryPlanner(llm=resolved_planner_llm),
     )
 
 
 def create_default_orchestrator(
     *,
     chat_llm: Any | None = None,
-    extractor_llm: Any | None = None,
+    planner_llm: Any | None = None,
     mem0_client: Any | None = None,
 ) -> ChatOrchestrator:
     """Create an orchestrator for tests or custom wiring.
@@ -140,7 +164,7 @@ def create_default_orchestrator(
         short_term_memory=ShortTermMemoryService(),
         long_term_memory=create_default_long_term_memory_service(
             mem0_client=mem0_client,
-            extractor_llm=extractor_llm,
+            planner_llm=planner_llm,
         ),
         chat_agent=ChatAgent(llm=resolved_chat_llm),
     )
@@ -149,13 +173,13 @@ def create_default_orchestrator(
 def create_default_application(
     *,
     chat_llm: Any | None = None,
-    extractor_llm: Any | None = None,
+    planner_llm: Any | None = None,
     mem0_client: Any | None = None,
 ) -> ChatBotApplication:
     resolved_chat_llm = chat_llm if chat_llm is not None else create_deepseek_chat_llm()
     long_term_memory = create_default_long_term_memory_service(
         mem0_client=mem0_client,
-        extractor_llm=extractor_llm,
+        planner_llm=planner_llm,
     )
     orchestrator = ChatOrchestrator(
         short_term_memory=ShortTermMemoryService(),

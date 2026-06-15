@@ -3,7 +3,11 @@ from types import SimpleNamespace
 
 import pytest
 
-from qq_group_chatter.app import MemoryConfigurationError, NoopMem0Client, create_default_mem0_client
+from qq_group_chatter.app import (
+    MemoryConfigurationError,
+    NoopMem0Client,
+    create_default_mem0_client,
+)
 
 
 class FakeMemory:
@@ -35,6 +39,7 @@ def test_default_mem0_client_uses_mem0_when_deepseek_key_exists(monkeypatch):
     assert client["config"]["llm"]["config"]["deepseek_base_url"] == "https://api.deepseek.com"
     assert client["config"]["embedder"]["provider"] == "fastembed"
     assert client["config"]["embedder"]["config"]["model"] == "BAAI/bge-small-zh-v1.5"
+    assert client["config"]["vector_store"]["config"]["embedding_model_dims"] == 512
 
 
 def test_default_mem0_client_wraps_mem0_initialization_errors(monkeypatch):
@@ -80,19 +85,20 @@ def test_default_mem0_client_collection_name_tracks_fastembed_model(monkeypatch)
     second_collection = second["config"]["vector_store"]["config"]["collection_name"]
     assert first_collection.startswith("qq_group_chatter_memories_")
     assert "bge_small_zh_v1_5" in first_collection
+    assert first_collection.endswith("_512d")
     assert second_collection.startswith("qq_group_chatter_memories_")
     assert first_collection != second_collection
 
 
-def test_default_long_term_memory_service_uses_deepseek_extractor(monkeypatch):
+def test_default_long_term_memory_service_uses_deepseek_planner(monkeypatch):
     monkeypatch.setenv("DEEPSEEK_API_KEY", "secret")
 
     from qq_group_chatter.app import create_default_long_term_memory_service
 
     service = create_default_long_term_memory_service(mem0_client=NoopMem0Client())
 
-    assert service._extractor._llm.model == "deepseek-v4-flash"
-    assert service._extractor._llm.thinking == "disabled"
+    assert service._planner._llm.model == "deepseek-v4-flash"
+    assert service._planner._llm.thinking == "disabled"
 
 
 def test_noop_mem0_client_accepts_real_add_signature():
@@ -104,3 +110,11 @@ def test_noop_mem0_client_accepts_real_add_signature():
         metadata={"scope": "user"},
         infer=False,
     ) == {"id": None}
+
+
+def test_noop_mem0_client_accepts_mutation_and_listing_signatures():
+    client = NoopMem0Client()
+
+    assert client.update("mem-1", "用户不吃辣", metadata={"scope": "user"}) == {"id": "mem-1"}
+    assert client.delete("mem-1") == {"id": "mem-1"}
+    assert client.get_all(filters={"user_id": "qq_user:123456"}, top_k=1000) == {"results": []}

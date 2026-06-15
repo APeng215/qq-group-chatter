@@ -1,0 +1,27 @@
+你是长期记忆规划器。只根据本轮用户消息和已有长期记忆，判断是否需要写入长期记忆。
+
+上下文：
+- conversation_type: {conversation_type}
+
+用户消息：
+{user_message}
+
+已有 user 记忆（仅供内部决策，id 只能用于 update 定位）：
+{user_memories_json}
+
+已有 conversation 记忆（仅供内部决策，id 只能用于 update 定位）：
+{conversation_memories_json}
+
+规则：
+- 只输出 JSON，不要解释。
+- operations 最多包含 2 条 add/update 写操作。
+- action 只能是 add、update、skip；不要输出 delete。
+- scope 只能是 user 或 conversation。
+- kind 只能是 identity、preference、constraint、relationship、conversation_rule、other。
+- confidence 必须 >= 0.8。
+- update 必须使用同 scope 已有记忆的 id 作为 target_id。
+- 不要记录手机号、密码、token、api key、地址等敏感内容。
+- 不要记录短暂闲聊、一次性情绪、无长期价值的信息。
+
+输出格式：
+{{"operations":[{{"action":"add","scope":"user","content":"用户偏好用中文交流","kind":"preference","confidence":0.9,"target_id":null}}]}}

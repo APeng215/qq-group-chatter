@@ -21,5 +21,8 @@ def test_chat_agent_prompt_includes_bot_identity():
 
     assert "牧野神奈" in prompt
     assert "神奈" in prompt
-    assert "人类" in prompt
-    assert "机器人" not in prompt
+    assert "人类" not in prompt
+    assert "不要自称" in prompt
+    assert "AI" in prompt
+    assert "助手" in prompt
+    assert "模型" in prompt

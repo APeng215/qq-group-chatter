@@ -39,8 +39,12 @@ async def test_deepseek_llm_calls_v4_pro_with_thinking_disabled():
     assert client.calls[0]["messages"][0]["role"] == "system"
     assert "牧野神奈" in client.calls[0]["messages"][0]["content"]
     assert "神奈" in client.calls[0]["messages"][0]["content"]
-    assert "人类" in client.calls[0]["messages"][0]["content"]
-    assert "机器人" not in client.calls[0]["messages"][0]["content"]
+    assert "人类" not in client.calls[0]["messages"][0]["content"]
+    assert "不要自称" in client.calls[0]["messages"][0]["content"]
+    assert "AI" in client.calls[0]["messages"][0]["content"]
+    assert "助手" in client.calls[0]["messages"][0]["content"]
+    assert "模型" in client.calls[0]["messages"][0]["content"]
+    assert "不要输出或解释思考过程" in client.calls[0]["messages"][0]["content"]
     assert client.calls[0]["messages"][1] == {"role": "user", "content": "hello"}
 
 

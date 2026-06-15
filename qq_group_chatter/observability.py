@@ -3,6 +3,8 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import re
+import sys
 import time
 from contextlib import contextmanager
 from typing import Any, Iterator
@@ -11,6 +13,16 @@ from prometheus_client import Counter, Gauge, Histogram
 
 
 logger = logging.getLogger("qq_group_chatter")
+
+
+SENSITIVE_LOG_PATTERNS = [
+    re.compile(r"\b\d{11}\b"),
+    re.compile(
+        r"(?i)\b(password|passwd|token|api[\s_-]?key|secret|bearer)\b\s*[:=：是为]\s*['\"]?[^'\"\s,;]+"
+    ),
+    re.compile(r"(密码|口令|令牌|密钥|秘钥|接口密钥)\s*[:=：是为]\s*['\"]?[^'\"\s,;]+"),
+    re.compile(r"(?i)\b(?:sk|ak)-[a-z0-9][a-z0-9_-]{6,}\b"),
+]
 
 
 MESSAGES_TOTAL = Counter(
@@ -69,6 +81,16 @@ def hash_identifier(value: str | None) -> str | None:
     return hashlib.sha256(value.encode("utf-8")).hexdigest()[:12]
 
 
+def conversation_log_fields(context: Any) -> dict[str, Any]:
+    return {
+        "conversation_id_hash": hash_identifier(getattr(context, "conversation_id", None)),
+        "conversation_type": getattr(context, "conversation_type", None),
+        "user_id_hash": hash_identifier(getattr(context, "user_id", None)),
+        "group_id_hash": hash_identifier(getattr(context, "group_id", None)),
+        "message_id": getattr(context, "message_id", None),
+    }
+
+
 def log_event(event: str, **fields: Any) -> None:
     payload = {"event": event, **fields}
     logger.info(json.dumps(payload, ensure_ascii=False, default=str))
@@ -80,7 +102,26 @@ def record_error(stage: str, error: BaseException) -> None:
         "stage=%s error_type=%s message=%s",
         stage,
         type(error).__name__,
-        error,
+        sanitize_log_text(str(error)),
+        exc_info=_sanitized_exc_info(error),
+    )
+
+
+def sanitize_log_text(value: str) -> str:
+    sanitized = value
+    for pattern in SENSITIVE_LOG_PATTERNS:
+        sanitized = pattern.sub("[REDACTED]", sanitized)
+    return sanitized
+
+
+def _sanitized_exc_info(error: BaseException):
+    exc_type, _, traceback = sys.exc_info()
+    if traceback is None or exc_type is None:
+        return None
+    return (
+        exc_type,
+        exc_type(sanitize_log_text(str(error))),
+        traceback,
     )
 
 

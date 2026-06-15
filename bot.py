@@ -2,8 +2,10 @@ import nonebot
 from nonebot.adapters.onebot.v11 import Adapter as OneBotV11Adapter
 
 from qq_group_chatter.app import create_default_application
+from qq_group_chatter.logging_config import configure_runtime_logging
 
 nonebot.init()
+configure_runtime_logging()
 driver = nonebot.get_driver()
 driver.register_adapter(OneBotV11Adapter)
 nonebot.load_plugin("qq_group_chatter.plugins.chat")

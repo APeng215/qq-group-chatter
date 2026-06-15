@@ -8,8 +8,9 @@ from typing import Any
 from qq_group_chatter.models import (
     ConversationContext,
     LongTermMemoryBundle,
-    LongTermMemoryCandidate,
     LongTermMemoryIngestionJob,
+    LongTermMemoryOperation,
+    LongTermMemoryRecord,
     conversation_memory_id,
     user_memory_id,
 )
@@ -20,15 +21,20 @@ from qq_group_chatter.observability import (
     MEMORY_CANDIDATES_TOTAL,
     MEMORY_DUPLICATE_SKIPS_TOTAL,
     MEMORY_INGESTION_QUEUE_SIZE,
+    conversation_log_fields,
     observe_duration,
     record_error,
 )
-from qq_group_chatter.services.long_term_memory_extractor import LongTermMemoryExtractor
+from qq_group_chatter.services.long_term_memory_planner import LongTermMemoryPlanner
 
 
 SENSITIVE_PATTERNS = [
     re.compile(r"\b\d{11}\b"),
-    re.compile(r"(?i)(password|passwd|token|api[_-]?key|secret)\s*[:=]"),
+    re.compile(r"(?i)(password|passwd|token|api[\s_-]?key|secret|bearer)\s*[:=：是为]"),
+    re.compile(r"(密码|口令|令牌|密钥|秘钥|接口密钥)\s*[:=：是为]"),
+    re.compile(r"(手机号|手机号码|电话|联系电话|联系方式)\s*[:=：是为]?"),
+    re.compile(r"(住址|地址|家庭地址|公司地址)\s*[:=：是为]?"),
+    re.compile(r"(?i)\b(?:sk|ak)-[a-z0-9][a-z0-9_-]{6,}\b"),
 ]
 
 
@@ -37,16 +43,18 @@ class LongTermMemoryService:
         self,
         *,
         mem0_client: Any,
-        extractor: LongTermMemoryExtractor,
+        planner: LongTermMemoryPlanner,
         min_confidence: float = 0.8,
         duplicate_threshold: float = 0.88,
-        max_candidates_per_message: int = 2,
+        max_operations_per_message: int = 2,
+        max_records_per_scope: int = 50,
     ):
         self._mem0 = mem0_client
-        self._extractor = extractor
+        self._planner = planner
         self._min_confidence = min_confidence
         self._duplicate_threshold = duplicate_threshold
-        self._max_candidates_per_message = max_candidates_per_message
+        self._max_operations_per_message = max_operations_per_message
+        self._max_records_per_scope = max_records_per_scope
         self._queue: asyncio.Queue[LongTermMemoryIngestionJob | None] = asyncio.Queue()
         self._worker: asyncio.Task[None] | None = None
 
@@ -113,73 +121,174 @@ class LongTermMemoryService:
             record_error(stage, exc)
 
     async def _process_job(self, job: LongTermMemoryIngestionJob) -> None:
-        candidates = await self._extractor.extract(
-            user_message=job.user_message,
-            context=job.context,
-        )
-        for candidate in candidates[: self._max_candidates_per_message]:
-            await self._ingest_candidate(candidate, job)
+        existing_memories = job.existing_memories
+        if existing_memories is None:
+            existing_memories = await self.search(job.user_message, job.context)
+        try:
+            operations = await self._planner.plan(
+                user_message=job.user_message,
+                context=job.context,
+                user_memories=existing_memories.user_memories,
+                conversation_memories=existing_memories.conversation_memories,
+            )
+        except Exception as exc:
+            record_error("long_term_memory_planner", exc)
+            return
 
-    async def _ingest_candidate(
+        writable_count = 0
+        for operation in operations:
+            if operation.action in {"add", "update"}:
+                if writable_count >= self._max_operations_per_message:
+                    continue
+                writable_count += 1
+            await self._ingest_operation(operation, job, existing_memories)
+
+    async def _ingest_operation(
         self,
-        candidate: LongTermMemoryCandidate,
+        operation: LongTermMemoryOperation,
         job: LongTermMemoryIngestionJob,
+        existing_memories: LongTermMemoryBundle,
     ) -> None:
-        if not self._is_valid_candidate(candidate):
+        if not self._is_valid_operation(operation):
             MEMORY_CANDIDATES_TOTAL.labels(
-                scope=candidate.scope,
-                kind=candidate.kind,
+                scope=operation.scope,
+                kind=operation.kind,
                 result="validation_skip",
             ).inc()
             return
 
-        target_id = self._target_memory_id(candidate, job.context)
-        existing = await self._search_scope(candidate.content, target_id, candidate.scope, limit=3)
-        if self._is_duplicate(candidate.content, existing):
-            MEMORY_DUPLICATE_SKIPS_TOTAL.labels(scope=candidate.scope).inc()
+        if operation.action == "skip":
             MEMORY_CANDIDATES_TOTAL.labels(
-                scope=candidate.scope,
-                kind=candidate.kind,
+                scope=operation.scope,
+                kind=operation.kind,
+                result="planner_skip",
+            ).inc()
+            return
+
+        target_id = self._target_memory_id(operation, job.context)
+        existing_records = self._existing_records_for_scope(operation.scope, existing_memories) or []
+        existing = [record.content for record in existing_records]
+        if operation.action == "add" and self._is_duplicate(operation.content, existing):
+            MEMORY_DUPLICATE_SKIPS_TOTAL.labels(scope=operation.scope).inc()
+            MEMORY_CANDIDATES_TOTAL.labels(
+                scope=operation.scope,
+                kind=operation.kind,
                 result="duplicate_skip",
             ).inc()
             return
 
-        metadata = {
-            "source": "qq",
-            "conversation_id": job.context.conversation_id,
-            "conversation_type": job.context.conversation_type,
-            "message_id": job.context.message_id,
-            "scope": candidate.scope,
-            "kind": candidate.kind,
-        }
+        if operation.action == "update":
+            target_record = _find_record(existing_records, operation.target_id)
+            if target_record is not None and target_record.id is not None:
+                await self._update_memory(target_record, operation.content, operation, job)
+                await self._prune_old_memories(target_id, operation.scope)
+            else:
+                MEMORY_CANDIDATES_TOTAL.labels(
+                    scope=operation.scope,
+                    kind=operation.kind,
+                    result="validation_skip",
+                ).inc()
+            return
+
+        await self._add_memory(operation.content, target_id, operation, job)
+        await self._prune_old_memories(target_id, operation.scope)
+
+    async def _add_memory(
+        self,
+        content: str,
+        target_id: str,
+        operation: LongTermMemoryOperation,
+        job: LongTermMemoryIngestionJob,
+    ) -> None:
+        metadata = _new_memory_metadata(operation, job)
         try:
             with observe_duration(
                 metric=MEM0_ADD_LATENCY_SECONDS,
-                labels={"scope": candidate.scope},
+                labels={"scope": operation.scope},
                 log_name="mem0_add",
                 log_fields={
-                    "conversation_id": job.context.conversation_id,
-                    "message_id": job.context.message_id,
-                    "memory_scope": candidate.scope,
-                    "memory_kind": candidate.kind,
+                    "memory_scope": operation.scope,
+                    "memory_kind": operation.kind,
+                    **conversation_log_fields(job.context),
                 },
             ):
                 await asyncio.to_thread(
                     self._mem0.add,
-                    [{"role": "user", "content": candidate.content}],
+                    [{"role": "user", "content": content}],
                     user_id=target_id,
                     metadata=metadata,
                     infer=False,
                 )
-            MEM0_ADD_TOTAL.labels(scope=candidate.scope, result="success").inc()
+            MEM0_ADD_TOTAL.labels(scope=operation.scope, result="success").inc()
             MEMORY_CANDIDATES_TOTAL.labels(
-                scope=candidate.scope,
-                kind=candidate.kind,
+                scope=operation.scope,
+                kind=operation.kind,
                 result="add",
             ).inc()
         except Exception as exc:
-            MEM0_ADD_TOTAL.labels(scope=candidate.scope, result="error").inc()
+            MEM0_ADD_TOTAL.labels(scope=operation.scope, result="error").inc()
             record_error("mem0_add", exc)
+
+    async def _update_memory(
+        self,
+        record: LongTermMemoryRecord,
+        content: str,
+        operation: LongTermMemoryOperation,
+        job: LongTermMemoryIngestionJob,
+    ) -> None:
+        metadata = {
+            **record.metadata,
+            "source": "qq",
+            "conversation_id": job.context.conversation_id,
+            "conversation_type": job.context.conversation_type,
+            "message_id": job.context.message_id,
+            "scope": operation.scope,
+            "kind": operation.kind,
+            "last_seen_at": job.context.timestamp,
+            "last_seen_message_id": job.context.message_id,
+        }
+        try:
+            await asyncio.to_thread(
+                self._mem0.update,
+                record.id,
+                content,
+                metadata=metadata,
+            )
+            MEMORY_CANDIDATES_TOTAL.labels(
+                scope=operation.scope,
+                kind=operation.kind,
+                result="update",
+            ).inc()
+        except Exception as exc:
+            record_error("mem0_update", exc)
+
+    async def _delete_memory(self, memory_id: str, scope: str) -> None:
+        try:
+            await asyncio.to_thread(self._mem0.delete, memory_id)
+        except Exception as exc:
+            record_error("mem0_delete", exc)
+
+    async def _prune_old_memories(self, target_id: str, scope: str) -> None:
+        if self._max_records_per_scope <= 0:
+            return
+        try:
+            raw = await asyncio.to_thread(
+                self._mem0.get_all,
+                filters={"user_id": target_id},
+                top_k=1000,
+            )
+            records = normalize_mem0_records(raw)
+        except Exception as exc:
+            record_error("mem0_get_all", exc)
+            return
+
+        overflow = len(records) - self._max_records_per_scope
+        if overflow <= 0:
+            return
+        sorted_records = sorted(records, key=_record_created_at)
+        for record in sorted_records[:overflow]:
+            if record.id is not None:
+                await self._delete_memory(record.id, scope)
 
     async def _search_scope(
         self,
@@ -187,7 +296,7 @@ class LongTermMemoryService:
         memory_id: str,
         scope: str,
         limit: int = 5,
-    ) -> list[str]:
+    ) -> list[LongTermMemoryRecord]:
         try:
             with observe_duration(
                 metric=MEM0_SEARCH_LATENCY_SECONDS,
@@ -201,28 +310,43 @@ class LongTermMemoryService:
                     filters={"user_id": memory_id},
                     top_k=limit,
                 )
-            return normalize_mem0_memories(raw)
+            return normalize_mem0_records(raw)
         except Exception as exc:
             record_error("mem0_search", exc)
             return []
 
-    def _is_valid_candidate(self, candidate: LongTermMemoryCandidate) -> bool:
-        if candidate.scope not in {"user", "conversation"}:
+    def _is_valid_operation(self, operation: LongTermMemoryOperation) -> bool:
+        if operation.action not in {"add", "update", "skip"}:
             return False
-        if candidate.confidence < self._min_confidence:
+        if operation.scope not in {"user", "conversation"}:
             return False
-        if not candidate.content.strip():
+        if operation.confidence < self._min_confidence:
             return False
-        return not any(pattern.search(candidate.content) for pattern in SENSITIVE_PATTERNS)
+        if not operation.content.strip():
+            return False
+        return not _contains_sensitive_content(operation.content)
 
     def _target_memory_id(
         self,
-        candidate: LongTermMemoryCandidate,
+        operation: LongTermMemoryOperation,
         context: ConversationContext,
     ) -> str:
-        if candidate.scope == "user":
+        if operation.scope == "user":
             return user_memory_id(context)
         return conversation_memory_id(context)
+
+    def _existing_records_for_scope(
+        self,
+        scope: str,
+        bundle: LongTermMemoryBundle | None,
+    ) -> list[LongTermMemoryRecord] | None:
+        if bundle is None:
+            return None
+        if scope == "user":
+            return bundle.user_memories
+        if scope == "conversation":
+            return bundle.conversation_memories
+        return []
 
     def _is_duplicate(self, content: str, existing_memories: list[str]) -> bool:
         normalized_content = _normalize_text(content)
@@ -237,7 +361,7 @@ class LongTermMemoryService:
         return False
 
 
-def normalize_mem0_memories(raw: Any) -> list[str]:
+def normalize_mem0_records(raw: Any) -> list[LongTermMemoryRecord]:
     if raw is None:
         return []
     if isinstance(raw, dict):
@@ -247,16 +371,106 @@ def normalize_mem0_memories(raw: Any) -> list[str]:
             raw = raw["memories"]
         else:
             raw = [raw]
-    memories = []
+    records = []
     for item in raw:
         if isinstance(item, str):
-            memories.append(item)
+            records.append(LongTermMemoryRecord(id=None, content=item, metadata={}))
         elif isinstance(item, dict):
-            value = item.get("memory") or item.get("content") or item.get("text")
+            record = _normalize_mem0_record(item)
+            if record is not None:
+                records.append(record)
+    return records
+
+
+def normalize_mem0_memories(raw: Any) -> list[str]:
+    return [record.content for record in normalize_mem0_records(raw)]
+
+
+def _normalize_mem0_record(item: dict[str, Any]) -> LongTermMemoryRecord | None:
+    payload = item.get("payload")
+    if isinstance(payload, dict):
+        value = (
+            item.get("memory")
+            or item.get("content")
+            or item.get("text")
+            or item.get("data")
+            or payload.get("memory")
+            or payload.get("content")
+            or payload.get("text")
+            or payload.get("data")
+        )
+    else:
+        payload = {}
+        value = item.get("memory") or item.get("content") or item.get("text") or item.get("data")
+    if not value:
+        return None
+
+    metadata: dict[str, object] = {}
+    item_metadata = item.get("metadata")
+    payload_metadata = payload.get("metadata")
+    if isinstance(item_metadata, dict):
+        metadata.update(item_metadata)
+    if isinstance(payload_metadata, dict):
+        metadata.update(payload_metadata)
+
+    content_keys = {"id", "memory", "content", "text", "data", "metadata", "payload"}
+    for source in (payload, item):
+        for key, extra_value in source.items():
+            if key in content_keys:
+                continue
             if value:
-                memories.append(str(value))
-    return memories
+                metadata.setdefault(key, extra_value)
+
+    record_id = item.get("id") or payload.get("id")
+    return LongTermMemoryRecord(
+        id=str(record_id) if record_id is not None else None,
+        content=str(value),
+        metadata=metadata,
+    )
+
+
+def _find_record(
+    records: list[LongTermMemoryRecord],
+    record_id: str | None,
+) -> LongTermMemoryRecord | None:
+    if record_id is None:
+        return None
+    for record in records:
+        if record.id == record_id:
+            return record
+    return None
+
+
+def _new_memory_metadata(
+    operation: LongTermMemoryOperation,
+    job: LongTermMemoryIngestionJob,
+) -> dict[str, object]:
+    return {
+        "source": "qq",
+        "conversation_id": job.context.conversation_id,
+        "conversation_type": job.context.conversation_type,
+        "message_id": job.context.message_id,
+        "scope": operation.scope,
+        "kind": operation.kind,
+        "created_at": job.context.timestamp,
+        "last_seen_at": job.context.timestamp,
+    }
+
+
+def _record_created_at(record: LongTermMemoryRecord) -> float:
+    value = record.metadata.get("created_at")
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return float("-inf")
 
 
 def _normalize_text(value: str) -> str:
     return re.sub(r"\s+", "", value).lower()
+
+
+def _contains_sensitive_content(value: str) -> bool:
+    if any(pattern.search(value) for pattern in SENSITIVE_PATTERNS):
+        return True
+    digits = re.sub(r"[\s\-()（）]", "", value)
+    return re.search(r"(?<!\d)1[3-9]\d{9}(?!\d)", digits) is not None

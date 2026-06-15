@@ -26,14 +26,14 @@
 1. 收到消息并构造 `ConversationContext`
 2. 过滤空消息等无效输入
 3. 写入 `ShortTermMemoryService`
-4. 立即投递用户消息到长期记忆后台 ingestion
-5. 读取短期记忆
-6. 查询用户长期记忆和会话长期记忆
+4. 读取短期记忆
+5. 查询用户长期记忆和会话长期记忆
+6. 携带本轮长期记忆查询快照，投递用户消息到长期记忆后台 ingestion
 7. 调用 `ChatAgent` 生成回复
 8. 发送回复
 9. 把 assistant 回复写入短期记忆
 
-长期记忆提取只看用户消息，不要把 assistant 回复喂给 extractor。
+长期记忆 planner 只看用户消息，不要把 assistant 回复喂给长期记忆处理链路。
 
 ## 记忆架构约束
 
@@ -54,11 +54,11 @@
 - 写入前必须做候选校验和重复抑制。
 - scope 只保留 `user` 和 `conversation`，不要引入 group-user 组合记忆，除非用户重新提出这个需求。
 
-长期记忆提取：
+长期记忆规划：
 
-- 实现在 `qq_group_chatter/services/long_term_memory_extractor.py`。
-- 默认 extractor LLM 用 `deepseek-v4-flash`，`thinking=disabled`。
-- 提取结果只返回结构化候选给长期记忆服务，不直接给聊天 Agent。
+- 实现在 `qq_group_chatter/services/long_term_memory_planner.py`。
+- 默认 planner LLM 用 `deepseek-v4-flash`，`thinking=disabled`。
+- planner 一次调用内完成是否提取长期记忆以及 add/update/skip 决策，不直接给聊天 Agent。
 - 不要提取手机号、密码、token、api key、地址等敏感内容。
 
 ## DeepSeek 与 Mem0 配置
@@ -75,7 +75,7 @@
 当前默认：
 
 - ChatAgent：`deepseek-v4-pro` + `thinking=disabled`
-- LongTermMemoryExtractor：`deepseek-v4-flash`
+- LongTermMemoryPlanner：`deepseek-v4-flash`
 - Mem0 内部 LLM provider：`deepseek`
 - Mem0 embedding：只使用本地 `fastembed`，推荐 `BAAI/bge-small-zh-v1.5`
 - 本地向量库：`.mem0/qdrant`
@@ -90,7 +90,7 @@
 
 - 消息处理数量和结果
 - 端到端回复耗时
-- chat agent / memory extractor LLM 耗时
+- chat agent / memory planner LLM 耗时
 - Mem0 search/add 耗时
 - 长期记忆队列长度
 - 候选 add/skip/error
@@ -123,7 +123,7 @@ python -c "from qq_group_chatter.app import create_default_mem0_client; c=create
 
 - 不要引入 LangGraph/checkpointer。
 - 不要把 Mem0 做成 Agent tool。
-- 不要改变长期记忆 ingestion 时机：收到有效用户消息后立即投递。
-- 不要把 assistant 回复用于长期记忆提取。
+- 不要把长期记忆 ingestion 延后到生成回复之后；收到有效用户消息后，应在读取短期记忆和查询长期记忆后，携带本轮长期记忆快照投递。
+- 不要把 assistant 回复用于长期记忆 planner。
 - 不要提交 `.env`、`.mem0/`、`*.egg-info/`、缓存目录或 API key。
 - 修改默认模型、记忆 scope、持久化策略前，先确认用户是否真的改变了需求。
