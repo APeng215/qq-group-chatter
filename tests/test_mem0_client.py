@@ -66,6 +66,24 @@ def test_default_mem0_client_uses_configured_fastembed_model(monkeypatch):
     assert client["config"]["embedder"]["config"]["model"] == "jinaai/jina-embeddings-v2-base-zh"
 
 
+def test_default_mem0_client_collection_name_tracks_fastembed_model(monkeypatch):
+    FakeMemory.created.clear()
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "secret")
+    monkeypatch.setitem(sys.modules, "mem0", SimpleNamespace(Memory=FakeMemory))
+
+    monkeypatch.setenv("MEM0_FASTEMBED_MODEL", "BAAI/bge-small-zh-v1.5")
+    first = create_default_mem0_client()
+    monkeypatch.setenv("MEM0_FASTEMBED_MODEL", "jinaai/jina-embeddings-v2-base-zh")
+    second = create_default_mem0_client()
+
+    first_collection = first["config"]["vector_store"]["config"]["collection_name"]
+    second_collection = second["config"]["vector_store"]["config"]["collection_name"]
+    assert first_collection.startswith("qq_group_chatter_memories_")
+    assert "bge_small_zh_v1_5" in first_collection
+    assert second_collection.startswith("qq_group_chatter_memories_")
+    assert first_collection != second_collection
+
+
 def test_default_long_term_memory_service_uses_deepseek_extractor(monkeypatch):
     monkeypatch.setenv("DEEPSEEK_API_KEY", "secret")
 

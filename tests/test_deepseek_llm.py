@@ -37,6 +37,10 @@ async def test_deepseek_llm_calls_v4_pro_with_thinking_disabled():
     assert client.calls[0]["extra_body"] == {"thinking": {"type": "disabled"}}
     assert client.calls[0]["stream"] is False
     assert client.calls[0]["messages"][0]["role"] == "system"
+    assert "牧野神奈" in client.calls[0]["messages"][0]["content"]
+    assert "神奈" in client.calls[0]["messages"][0]["content"]
+    assert "人类" in client.calls[0]["messages"][0]["content"]
+    assert "机器人" not in client.calls[0]["messages"][0]["content"]
     assert client.calls[0]["messages"][1] == {"role": "user", "content": "hello"}
 
 

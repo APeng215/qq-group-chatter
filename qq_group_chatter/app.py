@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import re
 from dataclasses import dataclass
 from typing import Any
 
@@ -59,12 +60,17 @@ def create_default_mem0_client() -> Any:
             "The 'mem0ai' package is required to enable Mem0 long-term memory."
         ) from exc
 
+    fastembed_model = (
+        os.getenv("MEM0_FASTEMBED_MODEL")
+        or _read_dotenv_key("MEM0_FASTEMBED_MODEL")
+        or "BAAI/bge-small-zh-v1.5"
+    )
+    collection_name = f"qq_group_chatter_memories_{_collection_suffix(fastembed_model)}"
+
     embedder_config: dict[str, Any] = {
         "provider": "fastembed",
         "config": {
-            "model": os.getenv("MEM0_FASTEMBED_MODEL")
-            or _read_dotenv_key("MEM0_FASTEMBED_MODEL")
-            or "BAAI/bge-small-zh-v1.5",
+            "model": fastembed_model,
         },
     }
 
@@ -83,7 +89,7 @@ def create_default_mem0_client() -> Any:
         "vector_store": {
             "provider": "qdrant",
             "config": {
-                "collection_name": "qq_group_chatter_memories",
+                "collection_name": collection_name,
                 "path": ".mem0/qdrant",
             },
         },
@@ -95,6 +101,11 @@ def create_default_mem0_client() -> Any:
             "Failed to initialize Mem0 long-term memory. "
             "Install configured dependencies and make sure the fastembed model is available."
         ) from exc
+
+
+def _collection_suffix(model_name: str) -> str:
+    suffix = re.sub(r"[^a-zA-Z0-9]+", "_", model_name).strip("_").lower()
+    return suffix or "default"
 
 
 def create_default_long_term_memory_service(

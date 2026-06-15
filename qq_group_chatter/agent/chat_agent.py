@@ -7,7 +7,12 @@ from qq_group_chatter.models import (
     ConversationContext,
     LongTermMemoryBundle,
 )
+from qq_group_chatter.agent.identity import BOT_IDENTITY_PROMPT
 from qq_group_chatter.observability import LLM_LATENCY_SECONDS, observe_duration
+from qq_group_chatter.prompt_loader import load_prompt
+
+
+CHAT_AGENT_PROMPT_TEMPLATE = load_prompt("chat_agent.txt")
 
 
 class ChatAgent:
@@ -67,19 +72,15 @@ class ChatAgent:
         history = "\n".join(
             f"{item.nickname or item.role}: {item.content}" for item in short_term_messages
         )
-        return (
-            "\u4f60\u662f QQ \u804a\u5929\u673a\u5668\u4eba\u3002"
-            "\u6839\u636e\u5f53\u524d\u4f1a\u8bdd\u4e0a\u4e0b\u6587\u548c"
-            "\u957f\u671f\u8bb0\u5fc6\u81ea\u7136\u56de\u590d\u3002\n\n"
-            f"conversation_type: {context.conversation_type}\n"
-            f"{long_term_memory.as_prompt_section()}\n\n"
-            "\u77ed\u671f\u4f1a\u8bdd\u4e0a\u4e0b\u6587\uff1a\n"
-            f"{history or '\u65e0'}\n\n"
-            f"\u5f53\u524d\u7528\u6237\u6d88\u606f\uff1a{user_message}"
+        return CHAT_AGENT_PROMPT_TEMPLATE.format(
+            bot_identity_prompt=BOT_IDENTITY_PROMPT,
+            conversation_type=context.conversation_type,
+            long_term_memory_section=long_term_memory.as_prompt_section(),
+            short_term_history=history or "\u65e0",
+            user_message=user_message,
         )
 
     def _content(self, raw: Any) -> str:
         if hasattr(raw, "content"):
             return str(raw.content)
         return str(raw)
-

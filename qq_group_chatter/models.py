@@ -3,6 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Literal
 
+from qq_group_chatter.prompt_loader import load_prompt
+
 
 ConversationType = Literal["group", "private"]
 MessageRole = Literal["user", "assistant"]
@@ -15,6 +17,8 @@ MemoryKind = Literal[
     "conversation_rule",
     "other",
 ]
+
+LONG_TERM_MEMORY_SECTION_TEMPLATE = load_prompt("long_term_memory_section.txt")
 
 
 @dataclass(frozen=True)
@@ -70,11 +74,9 @@ class LongTermMemoryBundle:
         conversation_lines = (
             "\n".join(f"- {item}" for item in self.conversation_memories) or "- \u65e0"
         )
-        return (
-            "\u76f8\u5173\u4e2a\u4eba\u957f\u671f\u8bb0\u5fc6\uff1a\n"
-            f"{user_lines}\n\n"
-            "\u76f8\u5173\u4f1a\u8bdd\u957f\u671f\u8bb0\u5fc6\uff1a\n"
-            f"{conversation_lines}"
+        return LONG_TERM_MEMORY_SECTION_TEMPLATE.format(
+            user_memory_lines=user_lines,
+            conversation_memory_lines=conversation_lines,
         )
 
 

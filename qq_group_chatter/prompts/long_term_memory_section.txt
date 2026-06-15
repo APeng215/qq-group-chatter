@@ -1,0 +1,5 @@
+相关个人长期记忆：
+{user_memory_lines}
+
+相关会话长期记忆：
+{conversation_memory_lines}

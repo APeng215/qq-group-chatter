@@ -5,6 +5,7 @@ from typing import Any
 
 from qq_group_chatter.models import ConversationContext, LongTermMemoryCandidate
 from qq_group_chatter.observability import LLM_LATENCY_SECONDS, observe_duration
+from qq_group_chatter.prompt_loader import load_prompt
 
 
 VALID_SCOPES: set[str] = {"user", "conversation"}
@@ -16,6 +17,7 @@ VALID_KINDS: set[str] = {
     "conversation_rule",
     "other",
 }
+EXTRACTOR_PROMPT_TEMPLATE = load_prompt("long_term_memory_extractor.txt")
 
 
 class LongTermMemoryExtractor:
@@ -59,18 +61,9 @@ class LongTermMemoryExtractor:
         raise TypeError("llm must be callable or expose invoke/ainvoke")
 
     def _build_prompt(self, *, user_message: str, context: ConversationContext) -> str:
-        return (
-            "\u4f60\u662f\u957f\u671f\u8bb0\u5fc6\u63d0\u53d6\u5668\u3002"
-            "\u53ea\u4ece\u7528\u6237\u6d88\u606f\u4e2d\u63d0\u53d6"
-            "\u7a33\u5b9a\u3001\u672a\u6765\u6709\u7528\u7684\u957f\u671f\u8bb0\u5fc6\u3002\n"
-            "\u4e0d\u8981\u63d0\u53d6\u4e34\u65f6\u60c5\u7eea\u3001\u4e00\u6b21\u6027\u4e8b\u4ef6\u3001"
-            "\u624b\u673a\u53f7\u3001\u5bc6\u7801\u3001token\u3001\u5730\u5740\u7b49\u654f\u611f\u4fe1\u606f\u3002\n"
-            "\u6700\u591a\u8f93\u51fa 2 \u6761\u3002scope \u53ea\u80fd\u662f user \u6216 conversation\u3002\n"
-            "\u53ea\u8fd4\u56de JSON\uff0c\u683c\u5f0f\uff1a"
-            '{"memories":[{"scope":"user","content":"...","confidence":0.9,"kind":"preference"}]}'
-            "\n\n"
-            f"conversation_type: {context.conversation_type}\n"
-            f"user_message: {user_message}"
+        return EXTRACTOR_PROMPT_TEMPLATE.format(
+            conversation_type=context.conversation_type,
+            user_message=user_message,
         )
 
     def _parse_candidates(self, raw: Any) -> list[LongTermMemoryCandidate]:

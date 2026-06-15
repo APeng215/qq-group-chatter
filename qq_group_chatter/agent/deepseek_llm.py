@@ -5,8 +5,12 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
 
+from qq_group_chatter.agent.identity import BOT_IDENTITY_PROMPT
+from qq_group_chatter.prompt_loader import load_prompt
+
 
 ThinkingMode = Literal["enabled", "disabled"]
+DEEPSEEK_SYSTEM_PROMPT_TEMPLATE = load_prompt("deepseek_system.txt")
 
 
 @dataclass
@@ -37,10 +41,8 @@ class DeepSeekChatLLM:
             messages=[
                 {
                     "role": "system",
-                    "content": (
-                        "\u4f60\u662f\u4e00\u4e2aQQ\u804a\u5929\u673a\u5668\u4eba\u3002"
-                        "\u56de\u590d\u8981\u81ea\u7136\u3001\u7b80\u77ed\uff0c"
-                        "\u4e0d\u8981\u89e3\u91ca\u601d\u8003\u8fc7\u7a0b\u3002"
+                    "content": DEEPSEEK_SYSTEM_PROMPT_TEMPLATE.format(
+                        bot_identity_prompt=BOT_IDENTITY_PROMPT,
                     ),
                 },
                 {"role": "user", "content": prompt},
