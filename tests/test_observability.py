@@ -40,3 +40,23 @@ def test_record_error_redacts_sensitive_exception_message(caplog):
     assert "[REDACTED]" in logged
     assert "Traceback" in logged
     assert "RuntimeError" in logged
+
+
+def test_record_error_handles_exception_types_that_require_custom_constructor(caplog):
+    class CustomValidationError(Exception):
+        def __init__(self, message, line_errors):
+            super().__init__(message)
+            self.line_errors = line_errors
+
+    caplog.set_level(logging.ERROR, logger="qq_group_chatter")
+
+    try:
+        raise CustomValidationError("failed with token=sk-secret", line_errors=[])
+    except CustomValidationError as exc:
+        record_error("unit_test", exc)
+
+    logged = caplog.text
+    assert "sk-secret" not in logged
+    assert "[REDACTED]" in logged
+    assert "CustomValidationError" in logged
+    assert "Traceback" in logged

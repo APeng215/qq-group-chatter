@@ -4,8 +4,8 @@ import hashlib
 import json
 import logging
 import re
-import sys
 import time
+import traceback
 from contextlib import contextmanager
 from typing import Any, Iterator
 
@@ -98,12 +98,12 @@ def log_event(event: str, **fields: Any) -> None:
 
 def record_error(stage: str, error: BaseException) -> None:
     ERRORS_TOTAL.labels(stage=stage, error_type=type(error).__name__).inc()
-    logger.exception(
-        "stage=%s error_type=%s message=%s",
+    logger.error(
+        "stage=%s error_type=%s message=%s\n%s",
         stage,
         type(error).__name__,
         sanitize_log_text(str(error)),
-        exc_info=_sanitized_exc_info(error),
+        _sanitized_traceback_text(error),
     )
 
 
@@ -114,14 +114,11 @@ def sanitize_log_text(value: str) -> str:
     return sanitized
 
 
-def _sanitized_exc_info(error: BaseException):
-    exc_type, _, traceback = sys.exc_info()
-    if traceback is None or exc_type is None:
-        return None
-    return (
-        exc_type,
-        exc_type(sanitize_log_text(str(error))),
-        traceback,
+def _sanitized_traceback_text(error: BaseException) -> str:
+    return sanitize_log_text(
+        "".join(
+            traceback.format_exception(type(error), error, error.__traceback__)
+        ).rstrip()
     )
 
 

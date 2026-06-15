@@ -9,7 +9,7 @@ from qq_group_chatter.prompt_loader import load_prompt
 ConversationType = Literal["group", "private"]
 MessageRole = Literal["user", "assistant"]
 MemoryScope = Literal["user", "conversation"]
-MemoryMergeAction = Literal["add", "update", "skip"]
+MemoryMergeAction = Literal["add", "update", "delete", "skip"]
 MemoryKind = Literal[
     "identity",
     "preference",

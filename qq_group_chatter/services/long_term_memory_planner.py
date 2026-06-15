@@ -17,7 +17,7 @@ from qq_group_chatter.prompt_loader import load_prompt
 
 
 PLANNER_PROMPT_TEMPLATE = load_prompt("long_term_memory_planner.txt")
-VALID_ACTIONS = {"add", "update", "skip"}
+VALID_ACTIONS = {"add", "update", "delete", "skip"}
 VALID_SCOPES = {"user", "conversation"}
 VALID_KINDS = {
     "identity",
@@ -116,7 +116,7 @@ class LongTermMemoryPlanner:
             )
             if operation is None:
                 continue
-            if operation.action in {"add", "update"}:
+            if operation.action in {"add", "update", "delete"}:
                 if writable_count >= self._max_writable_operations:
                     continue
                 writable_count += 1
@@ -165,9 +165,9 @@ def _parse_operation(
         return None
     if confidence < min_confidence:
         return None
-    if not content:
+    if action != "delete" and not content:
         return None
-    if action == "update":
+    if action in {"update", "delete"}:
         target_id = str(target_id).strip() if target_id is not None else None
         if not target_id or target_id not in valid_ids_by_scope[scope]:
             return None

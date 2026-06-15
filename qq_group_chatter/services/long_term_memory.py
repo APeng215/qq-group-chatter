@@ -137,7 +137,7 @@ class LongTermMemoryService:
 
         writable_count = 0
         for operation in operations:
-            if operation.action in {"add", "update"}:
+            if operation.action in {"add", "update", "delete"}:
                 if writable_count >= self._max_operations_per_message:
                     continue
                 writable_count += 1
@@ -175,6 +175,23 @@ class LongTermMemoryService:
                 kind=operation.kind,
                 result="duplicate_skip",
             ).inc()
+            return
+
+        if operation.action == "delete":
+            target_record = _find_record(existing_records, operation.target_id)
+            if target_record is not None and target_record.id is not None:
+                await self._delete_memory(target_record.id, operation.scope)
+                MEMORY_CANDIDATES_TOTAL.labels(
+                    scope=operation.scope,
+                    kind=operation.kind,
+                    result="delete",
+                ).inc()
+            else:
+                MEMORY_CANDIDATES_TOTAL.labels(
+                    scope=operation.scope,
+                    kind=operation.kind,
+                    result="validation_skip",
+                ).inc()
             return
 
         if operation.action == "update":
@@ -237,7 +254,7 @@ class LongTermMemoryService:
         job: LongTermMemoryIngestionJob,
     ) -> None:
         metadata = {
-            **record.metadata,
+            **_memory_update_metadata(record.metadata),
             "source": "qq",
             "conversation_id": job.context.conversation_id,
             "conversation_type": job.context.conversation_type,
@@ -316,12 +333,14 @@ class LongTermMemoryService:
             return []
 
     def _is_valid_operation(self, operation: LongTermMemoryOperation) -> bool:
-        if operation.action not in {"add", "update", "skip"}:
+        if operation.action not in {"add", "update", "delete", "skip"}:
             return False
         if operation.scope not in {"user", "conversation"}:
             return False
         if operation.confidence < self._min_confidence:
             return False
+        if operation.action == "delete":
+            return bool(operation.target_id)
         if not operation.content.strip():
             return False
         return not _contains_sensitive_content(operation.content)
@@ -452,13 +471,20 @@ def _new_memory_metadata(
         "message_id": job.context.message_id,
         "scope": operation.scope,
         "kind": operation.kind,
-        "created_at": job.context.timestamp,
+        "source_created_at": job.context.timestamp,
         "last_seen_at": job.context.timestamp,
     }
 
 
+def _memory_update_metadata(metadata: dict[str, object]) -> dict[str, object]:
+    cleaned = {key: value for key, value in metadata.items() if key not in {"created_at", "updated_at"}}
+    if "source_created_at" not in cleaned and "created_at" in metadata:
+        cleaned["source_created_at"] = metadata["created_at"]
+    return cleaned
+
+
 def _record_created_at(record: LongTermMemoryRecord) -> float:
-    value = record.metadata.get("created_at")
+    value = record.metadata.get("source_created_at", record.metadata.get("created_at"))
     try:
         return float(value)
     except (TypeError, ValueError):

@@ -9,3 +9,4 @@ pytest-cache-files-*/
 !.env.example
 tests/.tmp/
 .mem0/
+logs/

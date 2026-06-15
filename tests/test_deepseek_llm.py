@@ -38,6 +38,7 @@ async def test_deepseek_llm_calls_v4_pro_with_thinking_disabled():
 
     assert result == "OK"
     assert client.calls[0]["model"] == "deepseek-v4-pro"
+    assert "max_tokens" not in client.calls[0]
     assert client.calls[0]["extra_body"] == {"thinking": {"type": "disabled"}}
     assert client.calls[0]["stream"] is False
     assert client.calls[0]["messages"][0]["role"] == "system"
@@ -70,6 +71,15 @@ def test_factory_allows_flash_for_background_tasks(monkeypatch):
     assert llm is not None
     assert llm.model == "deepseek-v4-flash"
     assert llm.thinking == "disabled"
+
+
+def test_factory_allows_optional_max_tokens(monkeypatch):
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "secret")
+
+    llm = create_deepseek_chat_llm(max_tokens=1200)
+
+    assert llm is not None
+    assert llm.max_tokens == 1200
 
 
 def test_factory_returns_none_when_key_missing(monkeypatch):

@@ -58,7 +58,7 @@
   - Mem0 embedding：本地 `fastembed`
   - 本地向量库：`.mem0/qdrant`
 - `.env` 本地使用且已 ignore；提交示例只改 `.env.example`。
-- `.mem0/` 是运行数据和本地长期记忆存储，可以保留用于加快下次运行或保留本地记忆；不要提交。只有锁占用、权限错误、数据损坏或用户明确要求时才清理。
+- `.mem0/` 是运行数据和本地长期记忆存储，可以保留用于加快下次运行或保留本地记忆；不要提交。
 
 ## 可观测性
 
@@ -80,9 +80,9 @@ python -m pytest -q
 python -c "from qq_group_chatter.app import create_default_mem0_client; c=create_default_mem0_client(); print(type(c).__name__); c.close()"
 ```
 
-- pytest / Python 缓存可以保留用于加快本地开发和下次验证；不要提交。提交前确认 `.pytest_cache/`、`tests/.tmp/`、`pytest-cache-files-*`、`__pycache__/` 等仍被 `.gitignore` 忽略。
+- pytest / Python 缓存可以保留用于加快本地开发和下次验证；不要提交。
 - 测试或手动验证如果会写入长期记忆，必须使用隔离的测试 Mem0 目录、`NoopMem0Client` 或 fake client。
-- 测试创建的记忆不应该保留到真实 `.mem0/`；如果确实写入了真实 `.mem0/`，结束前只清理这部分测试记忆，不能误删用户真实长期记忆或模型/向量缓存。
+- 测试创建的记忆不应该保留到真实 `.mem0/`，也不能误删用户真实长期记忆或模型/向量缓存。
 - 测试里如果要避免真实网络或真实 Mem0，必须显式注入 `NoopMem0Client` 或 fake client，不要依赖默认工厂自动降级。
 
 ## 开发注意

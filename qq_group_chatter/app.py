@@ -12,6 +12,7 @@ from qq_group_chatter.orchestrator import ChatOrchestrator
 from qq_group_chatter.services.long_term_memory import LongTermMemoryService
 from qq_group_chatter.services.long_term_memory_planner import LongTermMemoryPlanner
 from qq_group_chatter.services.short_term_memory import ShortTermMemoryService
+from qq_group_chatter.services.web_search import WebSearchService, create_default_web_search_service
 
 
 class MemoryConfigurationError(RuntimeError):
@@ -48,6 +49,7 @@ class NoopMem0Client:
 class ChatBotApplication:
     orchestrator: ChatOrchestrator
     long_term_memory: LongTermMemoryService
+    web_search: WebSearchService | None = None
 
     async def start(self) -> None:
         await self.long_term_memory.start()
@@ -194,4 +196,5 @@ def create_default_application(
     return ChatBotApplication(
         orchestrator=orchestrator,
         long_term_memory=long_term_memory,
+        web_search=create_default_web_search_service(),
     )

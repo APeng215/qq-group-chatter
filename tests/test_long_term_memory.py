@@ -245,7 +245,7 @@ async def test_ingestion_calls_planner_once_and_adds_operation_asynchronously():
                 "message_id": "m1",
                 "scope": "user",
                 "kind": "preference",
-                "created_at": 123.0,
+                "source_created_at": 123.0,
                 "last_seen_at": 123.0,
             },
             "infer": False,
@@ -324,7 +324,7 @@ async def test_ingestion_updates_existing_memory_when_planner_returns_update():
                     LongTermMemoryRecord(
                         id="mem-user-1",
                         content="用户喜欢吃辣",
-                        metadata={"created_at": 100.0, "kind": "preference"},
+                        metadata={"source_created_at": 100.0, "kind": "preference"},
                     )
                 ],
                 conversation_memories=[],
@@ -341,7 +341,7 @@ async def test_ingestion_updates_existing_memory_when_planner_returns_update():
             "memory_id": "mem-user-1",
             "data": "用户现在不吃辣",
             "metadata": {
-                "created_at": 100.0,
+                "source_created_at": 100.0,
                 "kind": "preference",
                 "source": "qq",
                 "conversation_id": "qq_group:888888",
@@ -353,6 +353,52 @@ async def test_ingestion_updates_existing_memory_when_planner_returns_update():
             },
         }
     ]
+
+
+async def test_ingestion_update_drops_mem0_reserved_timestamp_metadata():
+    mem0 = FakeMem0Client()
+    planner = FakePlanner(
+        [
+            LongTermMemoryOperation(
+                action="update",
+                scope="user",
+                target_id="mem-user-1",
+                content="用户现在不吃辣",
+                kind="preference",
+                confidence=0.92,
+            )
+        ]
+    )
+    service = LongTermMemoryService(mem0_client=mem0, planner=planner)
+    await service.start()
+
+    await service.enqueue_ingestion(
+        LongTermMemoryIngestionJob(
+            context=context(),
+            user_message="我现在不吃辣",
+            existing_memories=LongTermMemoryBundle(
+                user_memories=[
+                    LongTermMemoryRecord(
+                        id="mem-user-1",
+                        content="用户喜欢吃辣",
+                        metadata={
+                            "created_at": 1781529229.0,
+                            "updated_at": 1781529230.0,
+                            "kind": "preference",
+                        },
+                    )
+                ],
+                conversation_memories=[],
+            ),
+        )
+    )
+    await asyncio.wait_for(service.join(), timeout=1)
+    await service.stop()
+
+    metadata = mem0.update_calls[0]["metadata"]
+    assert metadata["source_created_at"] == 1781529229.0
+    assert "created_at" not in metadata
+    assert "updated_at" not in metadata
 
 
 async def test_ingestion_adds_when_planner_returns_add():
@@ -433,6 +479,140 @@ async def test_ingestion_skips_when_planner_returns_skip():
 
     assert mem0.add_calls == []
     assert mem0.update_calls == []
+
+
+async def test_ingestion_deletes_existing_memory_when_planner_returns_delete():
+    mem0 = FakeMem0Client()
+    planner = FakePlanner(
+        [
+            LongTermMemoryOperation(
+                action="delete",
+                scope="user",
+                target_id="mem-user-1",
+                content="",
+                kind="preference",
+                confidence=0.92,
+            )
+        ]
+    )
+    service = LongTermMemoryService(mem0_client=mem0, planner=planner)
+    await service.start()
+
+    await service.enqueue_ingestion(
+        LongTermMemoryIngestionJob(
+            context=context(),
+            user_message="忘掉我喜欢吃辣这件事",
+            existing_memories=LongTermMemoryBundle(
+                user_memories=[
+                    LongTermMemoryRecord(
+                        id="mem-user-1",
+                        content="用户喜欢吃辣",
+                        metadata={"kind": "preference"},
+                    )
+                ],
+                conversation_memories=[],
+            ),
+        )
+    )
+    await asyncio.wait_for(service.join(), timeout=1)
+    await service.stop()
+
+    assert mem0.delete_calls == [{"memory_id": "mem-user-1"}]
+    assert mem0.add_calls == []
+    assert mem0.update_calls == []
+    assert mem0.get_all_calls == []
+
+
+async def test_ingestion_does_not_delete_missing_target():
+    mem0 = FakeMem0Client()
+    planner = FakePlanner(
+        [
+            LongTermMemoryOperation(
+                action="delete",
+                scope="user",
+                target_id="missing",
+                content="",
+                kind="preference",
+                confidence=0.92,
+            )
+        ]
+    )
+    service = LongTermMemoryService(mem0_client=mem0, planner=planner)
+    await service.start()
+
+    await service.enqueue_ingestion(
+        LongTermMemoryIngestionJob(
+            context=context(),
+            user_message="忘掉不存在的记忆",
+            existing_memories=LongTermMemoryBundle(
+                user_memories=[
+                    LongTermMemoryRecord(
+                        id="mem-user-1",
+                        content="用户喜欢吃辣",
+                        metadata={"kind": "preference"},
+                    )
+                ],
+                conversation_memories=[],
+            ),
+        )
+    )
+    await asyncio.wait_for(service.join(), timeout=1)
+    await service.stop()
+
+    assert mem0.delete_calls == []
+    assert mem0.add_calls == []
+    assert mem0.update_calls == []
+    assert mem0.get_all_calls == []
+
+
+async def test_ingestion_records_delete_error_without_escaping(monkeypatch):
+    class DeleteFailingMem0Client(FakeMem0Client):
+        def delete(self, memory_id):
+            super().delete(memory_id)
+            raise RuntimeError("delete failed")
+
+    mem0 = DeleteFailingMem0Client()
+    error_records = []
+    monkeypatch.setattr(
+        "qq_group_chatter.services.long_term_memory.record_error",
+        lambda stage, exc: error_records.append((stage, str(exc))),
+    )
+    planner = FakePlanner(
+        [
+            LongTermMemoryOperation(
+                action="delete",
+                scope="user",
+                target_id="mem-user-1",
+                content="用户喜欢吃辣",
+                kind="preference",
+                confidence=0.92,
+            )
+        ]
+    )
+    service = LongTermMemoryService(mem0_client=mem0, planner=planner)
+    await service.start()
+
+    await service.enqueue_ingestion(
+        LongTermMemoryIngestionJob(
+            context=context(),
+            user_message="忘掉我喜欢吃辣这件事",
+            existing_memories=LongTermMemoryBundle(
+                user_memories=[
+                    LongTermMemoryRecord(
+                        id="mem-user-1",
+                        content="用户喜欢吃辣",
+                        metadata={"kind": "preference"},
+                    )
+                ],
+                conversation_memories=[],
+            ),
+        )
+    )
+    await asyncio.wait_for(service.join(), timeout=1)
+    await service.stop()
+
+    assert mem0.delete_calls == [{"memory_id": "mem-user-1"}]
+    assert error_records == [("mem0_delete", "delete failed")]
 
 
 async def test_ingestion_skips_sensitive_operations_before_mem0_write():

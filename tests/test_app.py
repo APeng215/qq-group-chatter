@@ -1,7 +1,12 @@
 import subprocess
 import sys
 
-from qq_group_chatter.app import ChatBotApplication, NoopMem0Client, create_default_orchestrator
+from qq_group_chatter.app import (
+    ChatBotApplication,
+    NoopMem0Client,
+    create_default_application,
+    create_default_orchestrator,
+)
 from qq_group_chatter.models import build_private_conversation_context
 
 
@@ -44,6 +49,16 @@ def test_default_orchestrator_uses_deepseek_when_key_exists(monkeypatch):
 
     assert orchestrator._chat_agent._llm.model == "deepseek-v4-pro"
     assert orchestrator._chat_agent._llm.thinking == "disabled"
+
+
+def test_default_application_wires_web_search_when_tavily_key_exists(monkeypatch):
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "secret")
+    monkeypatch.setenv("TAVILY_API_KEY", "tavily-secret")
+    monkeypatch.setattr("qq_group_chatter.app.create_default_mem0_client", lambda: NoopMem0Client())
+
+    application = create_default_application()
+
+    assert application.web_search is not None
 
 
 class FakeLongTermMemory:

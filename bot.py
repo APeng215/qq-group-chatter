@@ -3,6 +3,7 @@ from nonebot.adapters.onebot.v11 import Adapter as OneBotV11Adapter
 
 from qq_group_chatter.app import create_default_application
 from qq_group_chatter.logging_config import configure_runtime_logging
+from qq_group_chatter.memory_dashboard import setup_memory_dashboard
 
 nonebot.init()
 configure_runtime_logging()
@@ -10,10 +11,12 @@ driver = nonebot.get_driver()
 driver.register_adapter(OneBotV11Adapter)
 nonebot.load_plugin("qq_group_chatter.plugins.chat")
 
-from qq_group_chatter.plugins.chat import setup_orchestrator
+from qq_group_chatter.plugins.chat import setup_orchestrator, setup_search_service
 
 application = create_default_application()
 setup_orchestrator(application.orchestrator)
+setup_search_service(application.web_search)
+setup_memory_dashboard(driver, application)
 
 
 @driver.on_startup

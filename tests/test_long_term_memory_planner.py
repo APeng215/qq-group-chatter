@@ -169,6 +169,121 @@ async def test_planner_skips_invalid_operations_and_invalid_update_target():
     ]
 
 
+async def test_planner_accepts_delete_for_existing_memory_id_with_empty_content():
+    planner = LongTermMemoryPlanner(
+        llm=FakePlannerLLM(
+            {
+                "operations": [
+                    {
+                        "action": "delete",
+                        "scope": "user",
+                        "target_id": "mem-user-1",
+                        "content": "",
+                        "kind": "preference",
+                        "confidence": 0.93,
+                    }
+                ]
+            }
+        )
+    )
+
+    operations = await planner.plan(
+        user_message="忘掉我喜欢吃辣这件事",
+        context=context(),
+        user_memories=user_records(),
+        conversation_memories=conversation_records(),
+    )
+
+    assert operations == [
+        LongTermMemoryOperation(
+            action="delete",
+            scope="user",
+            target_id="mem-user-1",
+            content="",
+            kind="preference",
+            confidence=0.93,
+        )
+    ]
+
+
+async def test_planner_rejects_delete_for_missing_or_cross_scope_target():
+    planner = LongTermMemoryPlanner(
+        llm=FakePlannerLLM(
+            {
+                "operations": [
+                    {
+                        "action": "delete",
+                        "scope": "user",
+                        "target_id": "missing",
+                        "content": "",
+                        "kind": "preference",
+                        "confidence": 0.93,
+                    },
+                    {
+                        "action": "delete",
+                        "scope": "conversation",
+                        "target_id": "mem-user-1",
+                        "content": "",
+                        "kind": "preference",
+                        "confidence": 0.93,
+                    },
+                ]
+            }
+        )
+    )
+
+    operations = await planner.plan(
+        user_message="忘掉这些记忆",
+        context=context(),
+        user_memories=user_records(),
+        conversation_memories=conversation_records(),
+    )
+
+    assert operations == []
+
+
+async def test_planner_counts_delete_as_writable_operation():
+    planner = LongTermMemoryPlanner(
+        llm=FakePlannerLLM(
+            {
+                "operations": [
+                    {
+                        "action": "delete",
+                        "scope": "user",
+                        "target_id": "mem-user-1",
+                        "content": "",
+                        "kind": "preference",
+                        "confidence": 0.9,
+                    },
+                    {
+                        "action": "add",
+                        "scope": "conversation",
+                        "content": "第二条",
+                        "kind": "other",
+                        "confidence": 0.9,
+                    },
+                    {
+                        "action": "add",
+                        "scope": "user",
+                        "content": "第三条",
+                        "kind": "other",
+                        "confidence": 0.9,
+                    },
+                ]
+            }
+        )
+    )
+
+    operations = await planner.plan(
+        user_message="忘掉一个，再记两个",
+        context=context(),
+        user_memories=user_records(),
+        conversation_memories=conversation_records(),
+    )
+
+    assert [operation.action for operation in operations] == ["delete", "add"]
+
+
 async def test_planner_limits_writable_operations_to_two():
     planner = LongTermMemoryPlanner(
         llm=FakePlannerLLM(

@@ -3,6 +3,7 @@ import logging
 from qq_group_chatter.logging_config import (
     configure_runtime_logging,
     configure_project_logging,
+    file_log_config_from_env,
     should_emit_loguru_record,
 )
 
@@ -60,9 +61,10 @@ def test_runtime_logging_defaults_show_framework_info(monkeypatch):
     def fake_configure_project_logging(level):
         calls["project_level"] = level
 
-    def fake_configure_loguru_logging(*, project_min_level, framework_min_level):
+    def fake_configure_loguru_logging(*, project_min_level, framework_min_level, file_log_config):
         calls["project_min_level"] = project_min_level
         calls["framework_min_level"] = framework_min_level
+        calls["file_log_config"] = file_log_config
 
     monkeypatch.setattr(
         "qq_group_chatter.logging_config.configure_project_logging",
@@ -79,6 +81,7 @@ def test_runtime_logging_defaults_show_framework_info(monkeypatch):
         "project_level": logging.INFO,
         "project_min_level": logging.INFO,
         "framework_min_level": logging.INFO,
+        "file_log_config": file_log_config_from_env(),
     }
 
 
@@ -158,3 +161,27 @@ def test_configure_project_logging_replaces_handlers_and_disables_propagation():
         logger.handlers = original_handlers
         logger.setLevel(original_level)
         logger.propagate = original_propagate
+
+
+def test_file_log_config_defaults_to_debug_log_with_five_file_retention(monkeypatch):
+    monkeypatch.delenv("QQ_GROUP_CHATTER_FILE_LOG_ENABLED", raising=False)
+    monkeypatch.delenv("QQ_GROUP_CHATTER_FILE_LOG_LEVEL", raising=False)
+    monkeypatch.delenv("QQ_GROUP_CHATTER_LOG_DIR", raising=False)
+
+    config = file_log_config_from_env()
+
+    assert config.enabled is True
+    assert config.level == logging.DEBUG
+    assert str(config.path).endswith("logs\\qq-group-chatter.log") or str(config.path).endswith(
+        "logs/qq-group-chatter.log"
+    )
+    assert config.retention == 5
+    assert config.rotation == "10 MB"
+
+
+def test_file_log_config_can_be_disabled(monkeypatch):
+    monkeypatch.setenv("QQ_GROUP_CHATTER_FILE_LOG_ENABLED", "false")
+
+    config = file_log_config_from_env()
+
+    assert config.enabled is False
