@@ -4,6 +4,7 @@ import pytest
 
 from qq_group_chatter.models import PendingAssistantReply, build_group_conversation_context
 from qq_group_chatter.plugins.chat import (
+    _handle_regular_chat,
     _send_reply_and_record,
     _send_search_reply,
     setup_search_service,
@@ -56,9 +57,26 @@ class FakeBot:
 class FakeOrchestrator:
     def __init__(self):
         self.recorded = []
+        self.handle_calls = []
 
     async def record_assistant_reply(self, reply):
         self.recorded.append(reply)
+
+    async def handle_message(self, *, context, user_message, on_search_start=None):
+        self.handle_calls.append(
+            {
+                "context": context,
+                "user_message": user_message,
+                "on_search_start": on_search_start,
+            }
+        )
+        if on_search_start is not None:
+            await on_search_start("我查一下再回你。")
+        return PendingAssistantReply(
+            context=context,
+            content="搜索最终答案",
+            timestamp=125.0,
+        )
 
 
 class FakeSearchService:
@@ -134,7 +152,10 @@ async def test_send_search_reply_uses_search_service_and_records_assistant_reply
 
     assert handled is True
     assert service.queries == ["DeepSeek 最新消息"]
-    assert bot.sent == [{"event": source_event, "message": "answer: DeepSeek 最新消息"}]
+    assert bot.sent == [
+        {"event": source_event, "message": "我先搜一下，稍等。"},
+        {"event": source_event, "message": "answer: DeepSeek 最新消息"},
+    ]
     assert orchestrator.recorded[0].content == "answer: DeepSeek 最新消息"
 
 
@@ -174,7 +195,62 @@ async def test_send_search_reply_logs_send_failure_without_raising(monkeypatch):
 
     assert handled is True
     assert orchestrator.recorded == []
-    assert recorded_errors == [{"stage": "web_search_send", "exc": error}]
+    assert recorded_errors == [
+        {"stage": "web_search_notice_send", "exc": error},
+        {"stage": "web_search_send", "exc": error},
+    ]
+
+
+async def test_send_search_reply_sends_notice_before_search_failure(monkeypatch):
+    class FailingSearchService:
+        async def search_reply(self, query):
+            raise RuntimeError("search failed")
+
+    bot = FakeBot()
+    orchestrator = FakeOrchestrator()
+    recorded_errors = []
+    source_event = event(to_me=True)
+    monkeypatch.setattr(
+        "qq_group_chatter.plugins.chat.record_error",
+        lambda stage, exc: recorded_errors.append({"stage": stage, "exc": exc}),
+    )
+
+    handled = await _send_search_reply(
+        bot,
+        source_event,
+        context(),
+        "搜索 DeepSeek 最新消息",
+        search_service=FailingSearchService(),
+        orchestrator=orchestrator,
+    )
+
+    assert handled is True
+    assert [item["message"] for item in bot.sent] == [
+        "我先搜一下，稍等。",
+        "搜索失败，稍后再试。",
+    ]
+    assert orchestrator.recorded[0].content == "搜索失败，稍后再试。"
+    assert recorded_errors[0]["stage"] == "web_search"
+
+
+async def test_regular_chat_sends_llm_search_notice_before_final_reply():
+    bot = FakeBot()
+    orchestrator = FakeOrchestrator()
+    source_event = event(to_me=True)
+
+    await _handle_regular_chat(
+        bot,
+        source_event,
+        context(),
+        "DeepSeek 今天有什么新闻？",
+        orchestrator,
+    )
+
+    assert [item["message"] for item in bot.sent] == [
+        "我查一下再回你。",
+        "搜索最终答案",
+    ]
+    assert orchestrator.recorded[0].content == "搜索最终答案"
 
 
 def test_setup_search_service_sets_module_global():

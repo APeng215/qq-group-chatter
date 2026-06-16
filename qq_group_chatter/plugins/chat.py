@@ -57,9 +57,7 @@ if on_message is not None:
             orchestrator=orchestrator,
         ):
             return
-        reply = await orchestrator.handle_message(context=context, user_message=text)
-        if reply:
-            await _send_reply_and_record(bot, event, reply, orchestrator)
+        await _handle_regular_chat(bot, event, context, text, orchestrator)
 
 
 def _context_from_event(event) -> ConversationContext | None:
@@ -122,6 +120,28 @@ async def _send_reply_and_record(
     await orchestrator.record_assistant_reply(reply)
 
 
+async def _handle_regular_chat(
+    bot,
+    event,
+    context,
+    text: str,
+    orchestrator: ChatOrchestrator,
+) -> None:
+    async def on_search_start(notice: str) -> None:
+        try:
+            await bot.send(event, notice)
+        except Exception as exc:
+            record_error("web_search_notice_send", exc)
+
+    reply = await orchestrator.handle_message(
+        context=context,
+        user_message=text,
+        on_search_start=on_search_start,
+    )
+    if reply:
+        await _send_reply_and_record(bot, event, reply, orchestrator)
+
+
 async def _send_search_reply(
     bot,
     event,
@@ -137,6 +157,10 @@ async def _send_search_reply(
     if search_service is None:
         reply_content = "搜索功能没有配置。请检查 WEB_SEARCH_ENABLED 和 TAVILY_API_KEY。"
     else:
+        try:
+            await bot.send(event, "我先搜一下，稍等。")
+        except Exception as exc:
+            record_error("web_search_notice_send", exc)
         try:
             reply_content = await search_service.search_reply(query)
         except Exception as exc:

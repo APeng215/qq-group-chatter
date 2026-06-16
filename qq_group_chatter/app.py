@@ -184,6 +184,7 @@ def create_default_application(
     mem0_client: Any | None = None,
 ) -> ChatBotApplication:
     resolved_chat_llm = chat_llm if chat_llm is not None else create_deepseek_chat_llm()
+    web_search = create_default_web_search_service()
     long_term_memory = create_default_long_term_memory_service(
         mem0_client=mem0_client,
         planner_llm=planner_llm,
@@ -192,9 +193,10 @@ def create_default_application(
         short_term_memory=ShortTermMemoryService(),
         long_term_memory=long_term_memory,
         chat_agent=ChatAgent(llm=resolved_chat_llm),
+        web_search=web_search,
     )
     return ChatBotApplication(
         orchestrator=orchestrator,
         long_term_memory=long_term_memory,
-        web_search=create_default_web_search_service(),
+        web_search=web_search,
     )

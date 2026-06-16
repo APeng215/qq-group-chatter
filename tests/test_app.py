@@ -59,6 +59,19 @@ def test_default_application_wires_web_search_when_tavily_key_exists(monkeypatch
     application = create_default_application()
 
     assert application.web_search is not None
+    assert application.orchestrator._web_search is application.web_search
+
+
+def test_default_orchestrator_does_not_create_web_search(monkeypatch):
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "secret")
+    monkeypatch.setattr(
+        "qq_group_chatter.app.create_default_web_search_service",
+        lambda: (_ for _ in ()).throw(AssertionError("should not create web search")),
+    )
+
+    orchestrator = create_default_orchestrator(mem0_client=NoopMem0Client())
+
+    assert orchestrator._web_search is None
 
 
 class FakeLongTermMemory:

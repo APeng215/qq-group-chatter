@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 from time import time
-from typing import Protocol
+from collections.abc import Awaitable, Callable
+from typing import Any, Protocol
 
+from qq_group_chatter.agent.chat_agent import parse_web_search_request
 from qq_group_chatter.models import (
     ChatMessage,
     ConversationContext,
@@ -41,6 +43,10 @@ class ReplyAgent(Protocol):
     ) -> str: ...
 
 
+class WebSearch(Protocol):
+    async def search_reply(self, query: str) -> str: ...
+
+
 class ChatOrchestrator:
     def __init__(
         self,
@@ -48,11 +54,13 @@ class ChatOrchestrator:
         short_term_memory: ShortTermMemory,
         long_term_memory: LongTermMemory,
         chat_agent: ReplyAgent,
+        web_search: WebSearch | None = None,
         short_term_limit: int = 20,
     ):
         self._short_term_memory = short_term_memory
         self._long_term_memory = long_term_memory
         self._chat_agent = chat_agent
+        self._web_search = web_search
         self._short_term_limit = short_term_limit
 
     async def handle_message(
@@ -60,6 +68,7 @@ class ChatOrchestrator:
         *,
         context: ConversationContext,
         user_message: str,
+        on_search_start: Callable[[str], Awaitable[None] | None] | None = None,
     ) -> PendingAssistantReply | None:
         content = user_message.strip()
         if not content:
@@ -104,6 +113,10 @@ class ChatOrchestrator:
                     short_term_messages=short_term_messages,
                     long_term_memory=long_term_memory,
                 )
+                reply = await self._resolve_web_search_reply(
+                    reply,
+                    on_search_start=on_search_start,
+                )
                 return PendingAssistantReply(
                     context=context,
                     content=reply,
@@ -116,6 +129,31 @@ class ChatOrchestrator:
                 ).inc()
                 record_error("chat_orchestrator", exc)
                 raise
+
+    async def _resolve_web_search_reply(
+        self,
+        reply: str,
+        *,
+        on_search_start: Callable[[str], Awaitable[None] | None] | None,
+    ) -> str:
+        request = parse_web_search_request(reply)
+        if request is None:
+            return reply
+        if self._web_search is None:
+            return "我现在没法联网搜索，稍后再试。"
+
+        if on_search_start is not None:
+            try:
+                result = on_search_start(request.notice)
+                if _is_awaitable(result):
+                    await result
+            except Exception as exc:
+                record_error("web_search_notice", exc)
+        try:
+            return await self._web_search.search_reply(request.query)
+        except Exception as exc:
+            record_error("web_search", exc)
+            return "搜索失败，稍后再试。"
 
     async def record_assistant_reply(self, reply: PendingAssistantReply) -> None:
         await self._short_term_memory.add_message(
@@ -133,3 +171,7 @@ class ChatOrchestrator:
             conversation_type=reply.context.conversation_type,
             result="replied",
         ).inc()
+
+
+def _is_awaitable(value: Any) -> bool:
+    return hasattr(value, "__await__")

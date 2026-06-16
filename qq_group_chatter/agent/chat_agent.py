@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Any
 
 from qq_group_chatter.models import (
@@ -17,6 +18,36 @@ from qq_group_chatter.prompt_loader import load_prompt
 
 
 CHAT_AGENT_PROMPT_TEMPLATE = load_prompt("chat_agent.txt")
+WEB_SEARCH_REQUEST_MARKER = "__NEED_WEB_SEARCH__"
+
+
+@dataclass(frozen=True)
+class WebSearchRequest:
+    notice: str
+    query: str
+
+
+def parse_web_search_request(reply: str) -> WebSearchRequest | None:
+    lines = reply.strip().splitlines()
+    if len(lines) != 3:
+        return None
+    if lines[0].strip() != WEB_SEARCH_REQUEST_MARKER:
+        return None
+
+    notice_prefix = "提示:"
+    query_prefix = "查询:"
+    notice_line = lines[1].strip()
+    query_line = lines[2].strip()
+    if not notice_line.startswith(notice_prefix):
+        return None
+    if not query_line.startswith(query_prefix):
+        return None
+
+    notice = notice_line[len(notice_prefix) :].strip()
+    query = query_line[len(query_prefix) :].strip()
+    if not notice or not query:
+        return None
+    return WebSearchRequest(notice=notice, query=query)
 
 
 class ChatAgent:
