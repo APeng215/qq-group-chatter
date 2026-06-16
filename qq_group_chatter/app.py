@@ -95,7 +95,7 @@ def create_default_mem0_client() -> Any:
             "provider": "deepseek",
             "config": {
                 "api_key": deepseek_key,
-                "model": "deepseek-v4-flash",
+                "model": "deepseek-v4-pro",
                 "temperature": 0.0,
                 "max_tokens": 1000,
                 "deepseek_base_url": "https://api.deepseek.com",
@@ -147,7 +147,7 @@ def create_default_long_term_memory_service(
     resolved_planner_llm = (
         planner_llm
         if planner_llm is not None
-        else create_deepseek_chat_llm(model="deepseek-v4-flash")
+        else create_deepseek_chat_llm(model="deepseek-v4-pro")
     )
     return LongTermMemoryService(
         mem0_client=mem0_client or create_default_mem0_client(),

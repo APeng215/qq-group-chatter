@@ -37,7 +37,7 @@ def test_default_mem0_client_uses_mem0_when_deepseek_key_exists(monkeypatch):
     assert client["client"] == "mem0"
     assert client["config"]["llm"]["provider"] == "deepseek"
     assert client["config"]["llm"]["config"]["api_key"] == "secret"
-    assert client["config"]["llm"]["config"]["model"] == "deepseek-v4-flash"
+    assert client["config"]["llm"]["config"]["model"] == "deepseek-v4-pro"
     assert client["config"]["llm"]["config"]["deepseek_base_url"] == "https://api.deepseek.com"
     assert client["config"]["embedder"]["provider"] == "fastembed"
     assert client["config"]["embedder"]["config"]["model"] == "BAAI/bge-small-zh-v1.5"
@@ -103,7 +103,7 @@ def test_default_long_term_memory_service_uses_deepseek_planner(monkeypatch):
 
     service = create_default_long_term_memory_service(mem0_client=NoopMem0Client())
 
-    assert service._planner._llm.model == "deepseek-v4-flash"
+    assert service._planner._llm.model == "deepseek-v4-pro"
     assert service._planner._llm.thinking == "disabled"
 
 

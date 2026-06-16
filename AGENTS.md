@@ -14,6 +14,7 @@
 - `create_default_orchestrator()` 只用于测试或显式自定义装配；直接用它不会自动启动长期记忆 worker。
 - NoneBot 插件入口：`qq_group_chatter/plugins/chat.py`。
 - 主编排：`qq_group_chatter/orchestrator.py`。
+- 联网搜索服务：`qq_group_chatter/services/web_search.py`，由 `create_default_application()` 装配后通过 `setup_search_service()` 注入插件。
 - 群聊和私聊都先构造成 `ConversationContext`。
 
 主链路顺序保持：
@@ -27,6 +28,8 @@
 7. 调用 `ChatAgent` 生成回复
 8. 发送回复
 9. 把 assistant 回复写入短期记忆
+
+搜索消息是普通聊天前的插件级分支：`plugins/chat.py` 会先用 `parse_search_command()` 判断是否为搜索触发词；如果是，调用 `WebSearchService.search_reply()` 并发送搜索回复，不进入 `ChatOrchestrator.handle_message()` 的普通聊天链路。
 
 长期记忆 planner 只看用户消息；不要把 assistant 回复喂给长期记忆处理链路。
 
@@ -44,7 +47,8 @@
 - 长期 ID：
   - 用户：`qq_user:{user_id}`
   - 会话：`qq_conversation:{conversation_id}`
-- 长期记忆 planner：`qq_group_chatter/services/long_term_memory_planner.py`，默认 `deepseek-v4-flash` + `thinking=disabled`；一次调用内完成提取判断和 add/update/skip 决策，不直接给聊天 Agent。
+- 长期记忆 planner：`qq_group_chatter/services/long_term_memory_planner.py`，默认 `deepseek-v4-pro` + `thinking=disabled`；一次调用内完成提取判断和 add/update/skip 决策，不直接给聊天 Agent。
+- 长期记忆写入 Mem0 时使用 `infer=False`；记忆提取、合并和跳过决策由项目自己的 `LongTermMemoryPlanner` 负责，不依赖 Mem0 内部 LLM 自动推理。
 - 不要提取手机号、密码、token、api key、地址等敏感内容。
 
 ## DeepSeek 和 Mem0
@@ -53,12 +57,24 @@
 - `MEM0_FASTEMBED_MODEL` 可选：默认 `BAAI/bge-small-zh-v1.5`。
 - 当前默认：
   - ChatAgent：`deepseek-v4-pro` + `thinking=disabled`
-  - LongTermMemoryPlanner：`deepseek-v4-flash`
-  - Mem0 内部 LLM provider：`deepseek`
+  - LongTermMemoryPlanner：`deepseek-v4-pro` + `thinking=disabled`
+  - Mem0 内部 LLM provider：`deepseek`，模型 `deepseek-v4-pro`
   - Mem0 embedding：本地 `fastembed`
   - 本地向量库：`.mem0/qdrant`
 - `.env` 本地使用且已 ignore；提交示例只改 `.env.example`。
 - `.mem0/` 是运行数据和本地长期记忆存储，可以保留用于加快下次运行或保留本地记忆；不要提交。
+
+## 联网搜索
+
+- 搜索入口在 `qq_group_chatter/services/web_search.py`；插件层在普通聊天前拦截搜索触发词。
+- 只使用低风险中文触发词：`搜一下`、`搜索`、`查一下`。不要新增 slash 命令，避免和 QQ/NoneBot 命令体系或风控行为混在一起。
+- 默认搜索 provider 是 Tavily；`WEB_SEARCH_ENABLED=true` 时需要 `TAVILY_API_KEY`，否则搜索服务初始化会失败。
+- 默认 Tavily 参数：`WEB_SEARCH_DEPTH=basic`、`WEB_SEARCH_MAX_RESULTS=3`、`WEB_SEARCH_INCLUDE_RAW_CONTENT=markdown`、`WEB_SEARCH_INCLUDE_ANSWER=false`、`WEB_SEARCH_TIMEOUT_SECONDS=8`。
+- 搜索回答由 `SearchAnswerAgent` 基于网页 `raw_content` 生成，不直接转发 Tavily 的 `answer`，也不默认暴露 URL。
+- 搜索回答模型默认 `WEB_SEARCH_ANSWER_MODEL=deepseek-v4-pro`、`WEB_SEARCH_ANSWER_THINKING=enabled`；不要重新加默认 `max_tokens` 上限，除非用户明确要求。
+- `WEB_SEARCH_INCLUDE_URLS=false` 时 prompt 和回复都不应包含 URL；如需展示 URL，必须显式打开该环境变量。
+- 每条来源正文默认按 `WEB_SEARCH_MAX_RAW_CONTENT_CHARS_PER_RESULT=3000` 截断；prompt 里看到的是网页正文片段，不保证是完整页面。
+- 搜索上下文不写入长期记忆；搜索回复只在发送成功后作为 assistant 回复进入短期记忆。
 
 ## 可观测性
 
