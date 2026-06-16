@@ -351,6 +351,33 @@ def memory_dashboard_html(snapshot: dict[str, Any]) -> str:
     .trace pre {{
       max-height: 360px;
     }}
+    .trace-message {{
+      margin-top: 12px;
+    }}
+    .trace-message-role {{
+      display: inline-flex;
+      align-items: center;
+      min-height: 22px;
+      padding: 1px 7px;
+      border-radius: 6px;
+      background: var(--accent-soft);
+      color: #1d4ed8;
+      font-size: 12px;
+      font-weight: 700;
+    }}
+    .trace-message-body {{
+      margin-top: 6px;
+      padding-left: 12px;
+      border-left: 3px solid #bfdbfe;
+    }}
+    .trace-message-content, .trace-json-block {{
+      margin-top: 6px;
+      background: #f8fafc;
+      border: 1px solid #e4e7ec;
+      border-radius: 6px;
+      color: var(--code);
+      line-height: 1.55;
+    }}
     .trace-tools {{
       grid-template-columns: minmax(220px, 1fr) 160px 160px auto auto;
     }}
@@ -451,6 +478,24 @@ def memory_dashboard_html(snapshot: dict[str, Any]) -> str:
 
     function formatTraceText(value) {{
       return escapeHtml(String(value ?? "").replace(/\\\\n/g, "\\n"));
+    }}
+
+    function renderTraceMessages(messages) {{
+      if (!Array.isArray(messages) || !messages.length) {{
+        return '<div class="empty">没有 messages</div>';
+      }}
+      return messages.map((message, index) => {{
+        const role = message && typeof message === "object" ? message.role : `message ${{index + 1}}`;
+        const content = message && typeof message === "object" && "content" in message
+          ? message.content
+          : message;
+        return `<div class="trace-message">
+          <div class="trace-message-role">${{escapeHtml(role || `message ${{index + 1}}`)}}</div>
+          <div class="trace-message-body">
+            <pre class="trace-message-content">${{formatTraceText(content ?? "")}}</pre>
+          </div>
+        </div>`;
+      }}).join("");
     }}
 
     function renderSummary() {{
@@ -590,7 +635,6 @@ def memory_dashboard_html(snapshot: dict[str, Any]) -> str:
       }}
       traceListEl.innerHTML = traces.map(item => {{
         const traceKey = String(item.trace_id || item.created_at || "");
-        const messages = JSON.stringify(item.messages || [], null, 2);
         const usage = JSON.stringify(item.usage || {{}}, null, 2);
         return `<article class="trace">
           <div class="memory-head">
@@ -613,11 +657,11 @@ def memory_dashboard_html(snapshot: dict[str, Any]) -> str:
           </details>
           <details data-detail-key="${{escapeHtml(traceKey)}}:messages">
             <summary>messages</summary>
-            <pre>${{formatTraceText(messages)}}</pre>
+            ${{renderTraceMessages(item.messages || [])}}
           </details>
           <details data-detail-key="${{escapeHtml(traceKey)}}:options">
             <summary>usage / options</summary>
-            <pre>${{escapeHtml(JSON.stringify({{
+            <pre class="trace-json-block">${{escapeHtml(JSON.stringify({{
               response_format: item.response_format || null,
               temperature: item.temperature ?? null,
               usage: item.usage || null,

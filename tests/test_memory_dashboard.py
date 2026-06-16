@@ -181,7 +181,26 @@ def test_memory_dashboard_html_renders_trace_text_newlines_readably():
     assert "formatTraceText" in html
     assert 'replace(/\\\\n/g, "\\n")' in html
     assert '<pre>${formatTraceText(item.response_text || "")}</pre>' in html
-    assert "<pre>${formatTraceText(messages)}</pre>" in html
+
+
+def test_memory_dashboard_html_renders_trace_messages_by_role_and_content():
+    html = memory_dashboard_html({"summary": {"total": 0}, "memories": [], "errors": []})
+
+    assert "function renderTraceMessages(messages)" in html
+    assert "trace-message-role" in html
+    assert "trace-message-content" in html
+    assert "JSON.stringify(item.messages || [], null, 2)" not in html
+    assert "<pre>${formatTraceText(messages)}</pre>" not in html
+    assert "${renderTraceMessages(item.messages || [])}" in html
+
+
+def test_memory_dashboard_html_indents_llm_trace_text_blocks():
+    html = memory_dashboard_html({"summary": {"total": 0}, "memories": [], "errors": []})
+
+    assert ".trace-message-body" in html
+    assert "border-left: 3px solid #bfdbfe" in html
+    assert "padding-left: 12px" in html
+    assert 'class="trace-json-block"' in html
 
 
 def test_memory_dashboard_html_does_not_poll_llm_traces():
