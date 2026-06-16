@@ -17,6 +17,7 @@ from qq_group_chatter.observability import (
     observe_duration,
 )
 from qq_group_chatter.prompt_loader import load_prompt
+from qq_group_chatter.time_utils import current_time_text, format_time_text
 
 
 CHAT_AGENT_PROMPT_TEMPLATE = load_prompt("chat_agent.txt")
@@ -194,11 +195,10 @@ class ChatAgent:
         short_term_messages: list[ChatMessage],
         long_term_memory: LongTermMemoryBundle,
     ) -> str:
-        history = "\n".join(
-            f"{item.nickname or item.role}: {item.content}" for item in short_term_messages
-        )
+        history = _format_short_term_history(short_term_messages)
         return CHAT_AGENT_PROMPT_TEMPLATE.format(
             bot_identity_prompt=BOT_IDENTITY_PROMPT,
+            current_time=current_time_text(),
             conversation_type=context.conversation_type,
             long_term_memory_section=long_term_memory.as_prompt_section(),
             short_term_history=history or "\u65e0",
@@ -215,11 +215,10 @@ class ChatAgent:
         short_term_messages: list[ChatMessage],
         long_term_memory: LongTermMemoryBundle,
     ) -> str:
-        history = "\n".join(
-            f"{item.nickname or item.role}: {item.content}" for item in short_term_messages
-        )
+        history = _format_short_term_history(short_term_messages)
         return CHAT_SEARCH_GROUNDED_PROMPT_TEMPLATE.format(
             bot_identity_prompt=BOT_IDENTITY_PROMPT,
+            current_time=current_time_text(),
             conversation_type=context.conversation_type,
             long_term_memory_section=long_term_memory.as_prompt_section(),
             short_term_history=history or "\u65e0",
@@ -232,6 +231,18 @@ class ChatAgent:
         if hasattr(raw, "content"):
             return str(raw.content)
         return str(raw)
+
+
+def _format_short_term_history(messages: list[ChatMessage]) -> str:
+    lines = []
+    for item in messages:
+        speaker = item.nickname or item.role
+        timestamp = format_time_text(item.timestamp)
+        if timestamp is None:
+            lines.append(f"{speaker}: {item.content}")
+        else:
+            lines.append(f"[{timestamp}] {speaker}: {item.content}")
+    return "\n".join(lines)
 
 
 def _format_search_sources(search_sources: list[Any]) -> str:

@@ -10,6 +10,7 @@
 - 可以在末尾用一行列出参考来源标题，格式为：参考来源：标题一；标题二。
 - 搜索资料只是本轮补充资料，不要当作长期记忆或用户偏好。
 
+当前时间：{current_time}
 conversation_type: {conversation_type}
 {long_term_memory_section}
 

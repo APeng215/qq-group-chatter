@@ -93,3 +93,54 @@ def test_long_term_memory_bundle_does_not_render_record_ids_or_metadata():
     assert "mem-conv-1" not in prompt_section
     assert "mem0" not in prompt_section
     assert "conversation" not in prompt_section
+
+
+def test_long_term_memory_bundle_renders_memory_times_as_local_time():
+    bundle = LongTermMemoryBundle(
+        user_memories=[
+            LongTermMemoryRecord(
+                id="mem-user-1",
+                content="用户不吃辣",
+                metadata={
+                    "source_created_at": 1781529229.0,
+                    "last_seen_at": 1781531640.0,
+                },
+            )
+        ],
+        conversation_memories=[
+            LongTermMemoryRecord(
+                id="mem-conv-1",
+                content="当前会话默认中文",
+                metadata={
+                    "source_created_at": "2026-06-15T13:13:49Z",
+                    "last_seen_at": "2026-06-15T13:54:00Z",
+                },
+            )
+        ],
+    )
+
+    prompt_section = bundle.as_prompt_section()
+
+    assert "- 用户不吃辣（记录于 2026-06-15 21:13，最后出现 2026-06-15 21:54）" in prompt_section
+    assert "- 当前会话默认中文（记录于 2026-06-15 21:13，最后出现 2026-06-15 21:54）" in prompt_section
+    assert "21:13:49" not in prompt_section
+    assert "21:54:00" not in prompt_section
+
+
+def test_long_term_memory_bundle_keeps_legacy_records_without_times_readable():
+    bundle = LongTermMemoryBundle(
+        user_memories=[
+            LongTermMemoryRecord(
+                id="mem-user-1",
+                content="用户不吃辣",
+                metadata={},
+            )
+        ],
+        conversation_memories=[],
+    )
+
+    prompt_section = bundle.as_prompt_section()
+
+    assert "- 用户不吃辣" in prompt_section
+    assert "记录于" not in prompt_section
+    assert "最后出现" not in prompt_section

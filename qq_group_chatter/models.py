@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from typing import Literal
 
 from qq_group_chatter.prompt_loader import load_prompt
+from qq_group_chatter.time_utils import format_time_text
 
 
 ConversationType = Literal["group", "private"]
@@ -68,10 +69,10 @@ class LongTermMemoryBundle:
 
     def as_prompt_section(self) -> str:
         user_lines = "\n".join(
-            f"- {record.content}" for record in self.user_memories
+            _format_memory_record(record) for record in self.user_memories
         ) or "- 无"
         conversation_lines = (
-            "\n".join(f"- {record.content}" for record in self.conversation_memories)
+            "\n".join(_format_memory_record(record) for record in self.conversation_memories)
             or "- 无"
         )
         return LONG_TERM_MEMORY_SECTION_TEMPLATE.format(
@@ -139,3 +140,16 @@ def user_memory_id(context: ConversationContext) -> str:
 
 def conversation_memory_id(context: ConversationContext) -> str:
     return f"qq_conversation:{context.conversation_id}"
+
+
+def _format_memory_record(record: LongTermMemoryRecord) -> str:
+    created_at = format_time_text(record.metadata.get("source_created_at"))
+    last_seen_at = format_time_text(record.metadata.get("last_seen_at"))
+    time_parts = []
+    if created_at is not None:
+        time_parts.append(f"记录于 {created_at}")
+    if last_seen_at is not None:
+        time_parts.append(f"最后出现 {last_seen_at}")
+    if not time_parts:
+        return f"- {record.content}"
+    return f"- {record.content}（{'，'.join(time_parts)}）"

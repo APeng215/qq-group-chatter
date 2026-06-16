@@ -39,6 +39,42 @@ def test_chat_agent_prompt_includes_bot_identity():
     assert "模型" in prompt
 
 
+def test_chat_agent_prompt_includes_current_time_and_timed_short_term_history(monkeypatch):
+    monkeypatch.setattr(
+        "qq_group_chatter.agent.chat_agent.current_time_text",
+        lambda: "2026-06-16 23:52",
+    )
+    agent = ChatAgent()
+    context = build_group_conversation_context(
+        group_id=888888,
+        user_id=123456,
+        message_id="m1",
+        nickname="阿咳",
+        timestamp=123.0,
+    )
+
+    prompt = agent._build_prompt(
+        user_message="刚才说到哪了？",
+        context=context,
+        short_term_messages=[
+            ChatMessage(
+                conversation_id=context.conversation_id,
+                role="user",
+                content="前文问题",
+                user_id="123456",
+                nickname="阿咳",
+                message_id="m0",
+                timestamp=1781531640.0,
+            )
+        ],
+        long_term_memory=LongTermMemoryBundle(user_memories=[], conversation_memories=[]),
+    )
+
+    assert "当前时间：2026-06-16 23:52" in prompt
+    assert "[2026-06-15 21:54] 阿咳: 前文问题" in prompt
+    assert "21:54:00" not in prompt
+
+
 def test_parse_chat_decision_accepts_reply_json():
     decision = parse_chat_decision('{"action":"reply","content":"普通回复"}')
 
@@ -134,3 +170,43 @@ async def test_chat_agent_builds_grounded_search_prompt_with_chat_context():
     assert "前文问题" in prompt
     assert "用户不吃辣" in prompt
     assert "https://example.com/news" not in prompt
+
+
+async def test_grounded_search_prompt_includes_current_time_and_timed_short_term_history(monkeypatch):
+    monkeypatch.setattr(
+        "qq_group_chatter.agent.chat_agent.current_time_text",
+        lambda: "2026-06-16 23:52",
+    )
+    llm = RecordingLLM()
+    agent = ChatAgent(llm=llm)
+    context = build_group_conversation_context(
+        group_id=888888,
+        user_id=123456,
+        message_id="m1",
+        nickname="阿咳",
+        timestamp=123.0,
+    )
+
+    await agent.generate_grounded_search_reply(
+        user_message="DeepSeek 今天有什么新闻？",
+        search_query="DeepSeek 最新消息",
+        search_sources=[],
+        context=context,
+        short_term_messages=[
+            ChatMessage(
+                conversation_id=context.conversation_id,
+                role="assistant",
+                content="前文回答",
+                user_id=None,
+                nickname=None,
+                message_id="m0",
+                timestamp=1781531640.0,
+            )
+        ],
+        long_term_memory=LongTermMemoryBundle(user_memories=[], conversation_memories=[]),
+    )
+
+    prompt = llm.prompts[0]
+    assert "当前时间：2026-06-16 23:52" in prompt
+    assert "[2026-06-15 21:54] assistant: 前文回答" in prompt
+    assert "21:54:00" not in prompt

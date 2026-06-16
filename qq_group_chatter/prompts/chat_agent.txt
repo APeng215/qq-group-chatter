@@ -8,6 +8,7 @@
 {{"action":"web_search","notice":"给对方看的等待提示","query":"适合搜索的简洁查询词"}}
 notice 必须是神奈会自然发给对方的一句话，query 必须是简洁搜索词。
 不要照抄字段说明，不要输出尖括号占位，不要输出“神奈要先发给对方的等待提示”或“适合搜索的查询词”。
+当前时间：{current_time}
 conversation_type: {conversation_type}
 {long_term_memory_section}
 
