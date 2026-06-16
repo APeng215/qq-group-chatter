@@ -81,6 +81,8 @@ class LongTermMemoryPlanner:
     ) -> str:
         return PLANNER_PROMPT_TEMPLATE.format(
             conversation_type=context.conversation_type,
+            current_user_qq=context.user_id,
+            current_user_nickname=_display_nickname(context.nickname),
             user_message=user_message,
             user_memories_json=_records_json(user_memories),
             conversation_memories_json=_records_json(conversation_memories),
@@ -136,6 +138,13 @@ def _records_json(records: list[LongTermMemoryRecord]) -> str:
         ],
         ensure_ascii=False,
     )
+
+
+def _display_nickname(nickname: str | None) -> str:
+    if nickname is None:
+        return "未设置"
+    text = str(nickname).strip()
+    return text or "未设置"
 
 
 def _parse_operation(

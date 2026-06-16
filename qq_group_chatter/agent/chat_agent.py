@@ -200,9 +200,10 @@ class ChatAgent:
             bot_identity_prompt=BOT_IDENTITY_PROMPT,
             current_time=current_time_text(),
             conversation_type=context.conversation_type,
-            long_term_memory_section=long_term_memory.as_prompt_section(),
+            long_term_memory_section=long_term_memory.as_prompt_section(context),
             short_term_history=history or "\u65e0",
-            user_message=user_message,
+            current_speaker=_format_current_speaker(context),
+            user_message=_format_current_user_message(context, user_message),
         )
 
     def _build_grounded_search_prompt(
@@ -220,9 +221,10 @@ class ChatAgent:
             bot_identity_prompt=BOT_IDENTITY_PROMPT,
             current_time=current_time_text(),
             conversation_type=context.conversation_type,
-            long_term_memory_section=long_term_memory.as_prompt_section(),
+            long_term_memory_section=long_term_memory.as_prompt_section(context),
             short_term_history=history or "\u65e0",
-            user_message=user_message,
+            current_speaker=_format_current_speaker(context),
+            user_message=_format_current_user_message(context, user_message),
             search_query=search_query,
             search_sources=_format_search_sources(search_sources),
         )
@@ -236,13 +238,38 @@ class ChatAgent:
 def _format_short_term_history(messages: list[ChatMessage]) -> str:
     lines = []
     for item in messages:
-        speaker = item.nickname or item.role
+        speaker = _format_message_speaker(item)
         timestamp = format_time_text(item.timestamp)
         if timestamp is None:
-            lines.append(f"{speaker}: {item.content}")
+            lines.append(f"{speaker} {item.content}")
         else:
-            lines.append(f"[{timestamp}] {speaker}: {item.content}")
+            lines.append(f"[{timestamp}] {speaker} {item.content}")
     return "\n".join(lines)
+
+
+def _format_current_speaker(context: ConversationContext) -> str:
+    return f"- QQ号：{context.user_id}\n- 昵称：{_display_nickname(context.nickname)}"
+
+
+def _format_current_user_message(context: ConversationContext, user_message: str) -> str:
+    return f"{_format_user_identity(context.user_id, context.nickname)} {user_message}"
+
+
+def _format_message_speaker(message: ChatMessage) -> str:
+    if message.role == "assistant":
+        return "[神奈]"
+    return _format_user_identity(message.user_id or "未知", message.nickname)
+
+
+def _format_user_identity(user_id: str, nickname: str | None) -> str:
+    return f"[QQ:{user_id} 昵称:{_display_nickname(nickname)}]"
+
+
+def _display_nickname(nickname: str | None) -> str:
+    if nickname is None:
+        return "未设置"
+    text = str(nickname).strip()
+    return text or "未设置"
 
 
 def _format_search_sources(search_sources: list[Any]) -> str:

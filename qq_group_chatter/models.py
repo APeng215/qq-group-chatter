@@ -67,7 +67,7 @@ class LongTermMemoryBundle:
     user_memories: list[LongTermMemoryRecord]
     conversation_memories: list[LongTermMemoryRecord]
 
-    def as_prompt_section(self) -> str:
+    def as_prompt_section(self, context: ConversationContext) -> str:
         user_lines = "\n".join(
             _format_memory_record(record) for record in self.user_memories
         ) or "- 无"
@@ -76,6 +76,8 @@ class LongTermMemoryBundle:
             or "- 无"
         )
         return LONG_TERM_MEMORY_SECTION_TEMPLATE.format(
+            current_user_qq=context.user_id,
+            current_user_nickname=_display_nickname(context.nickname),
             user_memory_lines=user_lines,
             conversation_memory_lines=conversation_lines,
         )
@@ -153,3 +155,10 @@ def _format_memory_record(record: LongTermMemoryRecord) -> str:
     if not time_parts:
         return f"- {record.content}"
     return f"- {record.content}（{'，'.join(time_parts)}）"
+
+
+def _display_nickname(nickname: str | None) -> str:
+    if nickname is None:
+        return "未设置"
+    text = str(nickname).strip()
+    return text or "未设置"

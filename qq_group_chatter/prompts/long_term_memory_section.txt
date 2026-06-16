@@ -1,4 +1,4 @@
-相关个人长期记忆：
+相关个人长期记忆（当前发言者 QQ号：{current_user_qq}，昵称：{current_user_nickname}）：
 {user_memory_lines}
 
 相关会话长期记忆：

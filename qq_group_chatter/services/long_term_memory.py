@@ -259,6 +259,8 @@ class LongTermMemoryService:
             "conversation_id": job.context.conversation_id,
             "conversation_type": job.context.conversation_type,
             "message_id": job.context.message_id,
+            "source_user_id": job.context.user_id,
+            "source_nickname": _display_nickname(job.context.nickname),
             "scope": operation.scope,
             "kind": operation.kind,
             "last_seen_at": job.context.timestamp,
@@ -469,6 +471,8 @@ def _new_memory_metadata(
         "conversation_id": job.context.conversation_id,
         "conversation_type": job.context.conversation_type,
         "message_id": job.context.message_id,
+        "source_user_id": job.context.user_id,
+        "source_nickname": _display_nickname(job.context.nickname),
         "scope": operation.scope,
         "kind": operation.kind,
         "source_created_at": job.context.timestamp,
@@ -481,6 +485,13 @@ def _memory_update_metadata(metadata: dict[str, object]) -> dict[str, object]:
     if "source_created_at" not in cleaned and "created_at" in metadata:
         cleaned["source_created_at"] = metadata["created_at"]
     return cleaned
+
+
+def _display_nickname(nickname: str | None) -> str:
+    if nickname is None:
+        return "未设置"
+    text = str(nickname).strip()
+    return text or "未设置"
 
 
 def _record_created_at(record: LongTermMemoryRecord) -> float:

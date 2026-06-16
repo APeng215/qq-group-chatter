@@ -3,6 +3,10 @@
 上下文：
 - conversation_type: {conversation_type}
 
+当前用户：
+- QQ号：{current_user_qq}
+- 昵称：{current_user_nickname}
+
 用户消息：
 {user_message}
 
@@ -25,6 +29,8 @@
 - delete 的 content 可以为空，或简短说明删除原因。
 - 不要记录手机号、密码、token、api key、地址等敏感内容。
 - 不要记录短暂闲聊、一次性情绪、无长期价值的信息。
+- QQ号是识别同一用户的稳定身份键，昵称只是显示名；user scope 的记忆归属以当前用户 QQ号 为准。
+- 不要把 QQ号 写进 memory content 本体，content 保持自然语言描述。
 
 输出格式：
 {{"operations":[{{"action":"add","scope":"user","content":"用户偏好用中文交流","kind":"preference","confidence":0.9,"target_id":null}}]}}

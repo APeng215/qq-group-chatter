@@ -99,6 +99,24 @@ def context():
     )
 
 
+def test_long_term_memory_prompt_section_labels_current_user_identity():
+    bundle = LongTermMemoryBundle(
+        user_memories=[
+            LongTermMemoryRecord(id="mem-user-1", content="用户不吃辣", metadata={})
+        ],
+        conversation_memories=[
+            LongTermMemoryRecord(id="mem-conv-1", content="当前会话默认中文", metadata={})
+        ],
+    )
+
+    section = bundle.as_prompt_section(context())
+
+    assert "相关个人长期记忆（当前发言者 QQ号：123456，昵称：阿咳）：" in section
+    assert "- 用户不吃辣" in section
+    assert "相关会话长期记忆：" in section
+    assert "- 当前会话默认中文" in section
+
+
 async def test_search_queries_user_and_conversation_memories():
     mem0 = FakeMem0Client()
     mem0.search_results = {
@@ -243,6 +261,8 @@ async def test_ingestion_calls_planner_once_and_adds_operation_asynchronously():
                 "conversation_id": "qq_group:888888",
                 "conversation_type": "group",
                 "message_id": "m1",
+                "source_user_id": "123456",
+                "source_nickname": "阿咳",
                 "scope": "user",
                 "kind": "preference",
                 "source_created_at": 123.0,
@@ -347,6 +367,8 @@ async def test_ingestion_updates_existing_memory_when_planner_returns_update():
                 "conversation_id": "qq_group:888888",
                 "conversation_type": "group",
                 "message_id": "m1",
+                "source_user_id": "123456",
+                "source_nickname": "阿咳",
                 "scope": "user",
                 "last_seen_at": 123.0,
                 "last_seen_message_id": "m1",

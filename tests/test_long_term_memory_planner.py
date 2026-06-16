@@ -87,8 +87,9 @@ async def test_planner_parses_operations_inside_markdown_fence():
     assert "mem-conv-1" in llm.prompts[0]
     assert "当前会话默认中文" in llm.prompts[0]
     assert "qq_group:888888" not in llm.prompts[0]
-    assert "123456" not in llm.prompts[0]
-    assert "阿咳" not in llm.prompts[0]
+    assert "QQ号：123456" in llm.prompts[0]
+    assert "昵称：阿咳" in llm.prompts[0]
+    assert "QQ号是识别同一用户的稳定身份键" in llm.prompts[0]
 
 
 async def test_planner_returns_empty_operations_for_empty_or_non_json_response():

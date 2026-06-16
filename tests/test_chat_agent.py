@@ -71,8 +71,82 @@ def test_chat_agent_prompt_includes_current_time_and_timed_short_term_history(mo
     )
 
     assert "当前时间：2026-06-16 23:52" in prompt
-    assert "[2026-06-15 21:54] 阿咳: 前文问题" in prompt
+    assert "[2026-06-15 21:54] [QQ:123456 昵称:阿咳] 前文问题" in prompt
     assert "21:54:00" not in prompt
+
+
+def test_chat_agent_prompt_labels_current_speaker_to_avoid_mention_confusion():
+    agent = ChatAgent()
+    context = build_group_conversation_context(
+        group_id=888888,
+        user_id=999999,
+        message_id="m1",
+        nickname="人",
+        timestamp=123.0,
+    )
+
+    prompt = agent._build_prompt(
+        user_message="@神奈（beta） 我喜欢你",
+        context=context,
+        short_term_messages=[],
+        long_term_memory=LongTermMemoryBundle(user_memories=[], conversation_memories=[]),
+    )
+
+    assert "当前发言者：\n- QQ号：999999\n- 昵称：人" in prompt
+    assert "当前用户消息：[QQ:999999 昵称:人] @神奈（beta） 我喜欢你" in prompt
+    assert "QQ号是识别同一用户的稳定身份键，昵称只是显示名" in prompt
+    assert "回复、称呼和记忆归属以当前发言者的 QQ号 为准" in prompt
+
+
+def test_chat_agent_prompt_distinguishes_same_nickname_by_qq_number():
+    agent = ChatAgent()
+    context = build_group_conversation_context(
+        group_id=888888,
+        user_id=333333,
+        message_id="m3",
+        nickname="人",
+        timestamp=123.0,
+    )
+
+    prompt = agent._build_prompt(
+        user_message="我来了",
+        context=context,
+        short_term_messages=[
+            ChatMessage(
+                conversation_id=context.conversation_id,
+                role="user",
+                content="前一个人的话",
+                user_id="111111",
+                nickname="人",
+                message_id="m1",
+                timestamp=121.0,
+            ),
+            ChatMessage(
+                conversation_id=context.conversation_id,
+                role="assistant",
+                content="神奈的回复",
+                user_id=None,
+                nickname=None,
+                message_id="m2",
+                timestamp=122.0,
+            ),
+            ChatMessage(
+                conversation_id=context.conversation_id,
+                role="user",
+                content="另一个人的话",
+                user_id="222222",
+                nickname="人",
+                message_id="m3",
+                timestamp=123.0,
+            ),
+        ],
+        long_term_memory=LongTermMemoryBundle(user_memories=[], conversation_memories=[]),
+    )
+
+    assert "[QQ:111111 昵称:人] 前一个人的话" in prompt
+    assert "[神奈] 神奈的回复" in prompt
+    assert "[QQ:222222 昵称:人] 另一个人的话" in prompt
+    assert "当前用户消息：[QQ:333333 昵称:人] 我来了" in prompt
 
 
 def test_parse_chat_decision_accepts_reply_json():
@@ -169,6 +243,8 @@ async def test_chat_agent_builds_grounded_search_prompt_with_chat_context():
     assert "原网页正文" in prompt
     assert "前文问题" in prompt
     assert "用户不吃辣" in prompt
+    assert "QQ号是识别同一用户的稳定身份键，昵称只是显示名" in prompt
+    assert "回复、称呼和记忆归属以当前发言者的 QQ号 为准" in prompt
     assert "https://example.com/news" not in prompt
 
 
@@ -208,5 +284,5 @@ async def test_grounded_search_prompt_includes_current_time_and_timed_short_term
 
     prompt = llm.prompts[0]
     assert "当前时间：2026-06-16 23:52" in prompt
-    assert "[2026-06-15 21:54] assistant: 前文回答" in prompt
+    assert "[2026-06-15 21:54] [神奈] 前文回答" in prompt
     assert "21:54:00" not in prompt
