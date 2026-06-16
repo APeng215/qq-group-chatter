@@ -16,6 +16,7 @@ from qq_group_chatter.observability import LLM_LATENCY_SECONDS, observe_duration
 from qq_group_chatter.prompt_loader import load_prompt
 
 
+PLANNER_SYSTEM_PROMPT = load_prompt("long_term_memory_planner_system.txt")
 PLANNER_PROMPT_TEMPLATE = load_prompt("long_term_memory_planner.txt")
 VALID_ACTIONS = {"add", "update", "delete", "skip"}
 VALID_SCOPES = {"user", "conversation"}
@@ -68,13 +69,14 @@ class LongTermMemoryPlanner:
                 raw = await self._llm.ainvoke(
                     prompt,
                     response_format={"type": "json_object"},
+                    system_prompt=PLANNER_SYSTEM_PROMPT,
                     trace_context={
                         "component": "memory_planner",
                         "operation": "plan_memory",
                     },
                 )
             except TypeError:
-                raw = await self._llm.ainvoke(prompt)
+                raw = await self._llm.ainvoke(_combined_prompt(prompt))
         return self._parse_operations(
             raw,
             user_memories=user_memories,
@@ -148,6 +150,10 @@ def _records_json(records: list[LongTermMemoryRecord]) -> str:
         ],
         ensure_ascii=False,
     )
+
+
+def _combined_prompt(prompt: str) -> str:
+    return f"{PLANNER_SYSTEM_PROMPT}\n\n{prompt}"
 
 
 def _display_nickname(nickname: str | None) -> str:

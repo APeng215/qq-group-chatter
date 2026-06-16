@@ -43,17 +43,19 @@ class DeepSeekChatLLM:
         prompt: str,
         *,
         response_format: dict[str, Any] | None = None,
+        system_prompt: str | None = None,
         trace_context: dict[str, str] | None = None,
     ) -> str:
         resolved_response_format = (
             response_format if response_format is not None else self.response_format
         )
+        resolved_system_prompt = system_prompt or DEEPSEEK_SYSTEM_PROMPT_TEMPLATE.format(
+            bot_identity_prompt=BOT_IDENTITY_PROMPT,
+        )
         messages = [
             {
                 "role": "system",
-                "content": DEEPSEEK_SYSTEM_PROMPT_TEMPLATE.format(
-                    bot_identity_prompt=BOT_IDENTITY_PROMPT,
-                ),
+                "content": resolved_system_prompt,
             },
             {"role": "user", "content": prompt},
         ]

@@ -85,6 +85,19 @@ async def test_deepseek_llm_can_override_response_format_per_call():
     assert client.calls[0]["response_format"] == {"type": "json_object"}
 
 
+async def test_deepseek_llm_can_override_system_prompt_per_call():
+    client = FakeAsyncClient()
+    llm = DeepSeekChatLLM(api_key="secret", client=client)
+
+    await llm.ainvoke("return json", system_prompt="你是长期记忆规划器。")
+
+    assert client.calls[0]["messages"][0] == {
+        "role": "system",
+        "content": "你是长期记忆规划器。",
+    }
+    assert client.calls[0]["messages"][1] == {"role": "user", "content": "return json"}
+
+
 async def test_deepseek_llm_records_prompt_response_and_usage():
     class UsageClient(FakeAsyncClient):
         async def create(self, **kwargs):
