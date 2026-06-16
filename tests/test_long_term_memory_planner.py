@@ -46,6 +46,21 @@ def conversation_records():
     ]
 
 
+def global_records():
+    return [
+        LongTermMemoryRecord(
+            id="mem-global-user-1",
+            content="小明在上大学",
+            metadata={"scope": "user", "kind": "other"},
+        ),
+        LongTermMemoryRecord(
+            id="mem-global-conv-1",
+            content="当前会话曾聊过旧项目",
+            metadata={"scope": "conversation", "kind": "other"},
+        ),
+    ]
+
+
 async def test_planner_parses_operations_inside_markdown_fence():
     llm = FakePlannerLLM(
         "```json\n"
@@ -100,6 +115,7 @@ async def test_planner_returns_empty_operations_for_empty_or_non_json_response()
         context=context(),
         user_memories=[],
         conversation_memories=[],
+        global_memories=[],
     )
 
     assert operations == []
@@ -156,6 +172,7 @@ async def test_planner_skips_invalid_operations_and_invalid_update_target():
         context=context(),
         user_memories=user_records(),
         conversation_memories=conversation_records(),
+        global_memories=[],
     )
 
     assert operations == [
@@ -193,6 +210,7 @@ async def test_planner_accepts_delete_for_existing_memory_id_with_empty_content(
         context=context(),
         user_memories=user_records(),
         conversation_memories=conversation_records(),
+        global_memories=[],
     )
 
     assert operations == [
@@ -238,6 +256,7 @@ async def test_planner_rejects_delete_for_missing_or_cross_scope_target():
         context=context(),
         user_memories=user_records(),
         conversation_memories=conversation_records(),
+        global_memories=[],
     )
 
     assert operations == []
@@ -280,6 +299,7 @@ async def test_planner_counts_delete_as_writable_operation():
         context=context(),
         user_memories=user_records(),
         conversation_memories=conversation_records(),
+        global_memories=[],
     )
 
     assert [operation.action for operation in operations] == ["delete", "add"]
@@ -321,6 +341,112 @@ async def test_planner_limits_writable_operations_to_two():
         context=context(),
         user_memories=[],
         conversation_memories=[],
+        global_memories=[],
     )
 
     assert [operation.content for operation in operations] == ["第一条", "第二条"]
+
+
+async def test_planner_prompt_includes_global_memories():
+    llm = FakePlannerLLM({"operations": []})
+    planner = LongTermMemoryPlanner(llm=llm)
+
+    await planner.plan(
+        user_message="小明毕业了吗",
+        context=context(),
+        user_memories=user_records(),
+        conversation_memories=conversation_records(),
+        global_memories=global_records(),
+    )
+
+    prompt = llm.prompts[0]
+    assert "当前 conversation 内其他相关记忆" in prompt
+    assert "mem-global-user-1" in prompt
+    assert "小明在上大学" in prompt
+    assert '"scope": "user"' in prompt
+    assert "mem-global-conv-1" in prompt
+    assert "当前会话曾聊过旧项目" in prompt
+    assert '"scope": "conversation"' in prompt
+
+
+async def test_planner_accepts_update_and_delete_for_global_memory_ids():
+    planner = LongTermMemoryPlanner(
+        llm=FakePlannerLLM(
+            {
+                "operations": [
+                    {
+                        "action": "update",
+                        "scope": "user",
+                        "target_id": "mem-global-user-1",
+                        "content": "小明已经大学毕业",
+                        "kind": "other",
+                        "confidence": 0.92,
+                    },
+                    {
+                        "action": "delete",
+                        "scope": "conversation",
+                        "target_id": "mem-global-conv-1",
+                        "content": "",
+                        "kind": "other",
+                        "confidence": 0.92,
+                    },
+                ]
+            }
+        )
+    )
+
+    operations = await planner.plan(
+        user_message="更新这些记忆",
+        context=context(),
+        user_memories=user_records(),
+        conversation_memories=conversation_records(),
+        global_memories=global_records(),
+    )
+
+    assert operations == [
+        LongTermMemoryOperation(
+            action="update",
+            scope="user",
+            target_id="mem-global-user-1",
+            content="小明已经大学毕业",
+            kind="other",
+            confidence=0.92,
+        ),
+        LongTermMemoryOperation(
+            action="delete",
+            scope="conversation",
+            target_id="mem-global-conv-1",
+            content="",
+            kind="other",
+            confidence=0.92,
+        ),
+    ]
+
+
+async def test_planner_rejects_global_target_id_with_wrong_scope():
+    planner = LongTermMemoryPlanner(
+        llm=FakePlannerLLM(
+            {
+                "operations": [
+                    {
+                        "action": "delete",
+                        "scope": "conversation",
+                        "target_id": "mem-global-user-1",
+                        "content": "",
+                        "kind": "other",
+                        "confidence": 0.92,
+                    }
+                ]
+            }
+        )
+    )
+
+    operations = await planner.plan(
+        user_message="删掉这个",
+        context=context(),
+        user_memories=user_records(),
+        conversation_memories=conversation_records(),
+        global_memories=global_records(),
+    )
+
+    assert operations == []

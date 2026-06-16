@@ -449,6 +449,10 @@ def memory_dashboard_html(snapshot: dict[str, Any]) -> str:
       }}[char]));
     }}
 
+    function formatTraceText(value) {{
+      return escapeHtml(String(value ?? "").replace(/\\\\n/g, "\\n"));
+    }}
+
     function renderSummary() {{
       const s = snapshot.summary || {{}};
       summaryEl.innerHTML = [
@@ -605,11 +609,11 @@ def memory_dashboard_html(snapshot: dict[str, Any]) -> str:
           ${{item.error_message ? `<div class="error">${{escapeHtml(item.error_type || "Error")}}: ${{escapeHtml(item.error_message)}}</div>` : ""}}
           <details data-detail-key="${{escapeHtml(traceKey)}}:response" open>
             <summary>response</summary>
-            <pre>${{escapeHtml(item.response_text || "")}}</pre>
+            <pre>${{formatTraceText(item.response_text || "")}}</pre>
           </details>
           <details data-detail-key="${{escapeHtml(traceKey)}}:messages">
             <summary>messages</summary>
-            <pre>${{escapeHtml(messages)}}</pre>
+            <pre>${{formatTraceText(messages)}}</pre>
           </details>
           <details data-detail-key="${{escapeHtml(traceKey)}}:options">
             <summary>usage / options</summary>
@@ -692,8 +696,6 @@ def memory_dashboard_html(snapshot: dict[str, Any]) -> str:
     llmTabEl.addEventListener("click", () => showPanel("llm"));
     syncKinds();
     render();
-    refreshTraces();
-    setInterval(refreshTraces, 2000);
   </script>
 </body>
 </html>

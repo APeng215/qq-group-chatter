@@ -1,10 +1,9 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Literal
 
 from qq_group_chatter.prompt_loader import load_prompt
-from qq_group_chatter.time_utils import format_time_text
 
 
 ConversationType = Literal["group", "private"]
@@ -66,6 +65,7 @@ class LongTermMemoryOperation:
 class LongTermMemoryBundle:
     user_memories: list[LongTermMemoryRecord]
     conversation_memories: list[LongTermMemoryRecord]
+    global_memories: list[LongTermMemoryRecord] = field(default_factory=list)
 
     def as_prompt_section(self, context: ConversationContext) -> str:
         user_lines = "\n".join(
@@ -75,11 +75,16 @@ class LongTermMemoryBundle:
             "\n".join(_format_memory_record(record) for record in self.conversation_memories)
             or "- 无"
         )
+        global_lines = (
+            "\n".join(_format_global_memory_record(record) for record in self.global_memories)
+            or "- 无"
+        )
         return LONG_TERM_MEMORY_SECTION_TEMPLATE.format(
             current_user_qq=context.user_id,
             current_user_nickname=_display_nickname(context.nickname),
             user_memory_lines=user_lines,
             conversation_memory_lines=conversation_lines,
+            global_memory_lines=global_lines,
         )
 
 
@@ -137,7 +142,7 @@ def build_private_conversation_context(
 
 
 def user_memory_id(context: ConversationContext) -> str:
-    return f"qq_user:{context.user_id}"
+    return f"qq_user:{context.conversation_id}:{context.user_id}"
 
 
 def conversation_memory_id(context: ConversationContext) -> str:
@@ -145,16 +150,29 @@ def conversation_memory_id(context: ConversationContext) -> str:
 
 
 def _format_memory_record(record: LongTermMemoryRecord) -> str:
-    created_at = format_time_text(record.metadata.get("source_created_at"))
-    last_seen_at = format_time_text(record.metadata.get("last_seen_at"))
-    time_parts = []
-    if created_at is not None:
-        time_parts.append(f"记录于 {created_at}")
-    if last_seen_at is not None:
-        time_parts.append(f"最后出现 {last_seen_at}")
-    if not time_parts:
-        return f"- {record.content}"
-    return f"- {record.content}（{'，'.join(time_parts)}）"
+    return f"- {record.content}"
+
+
+def _format_global_memory_record(record: LongTermMemoryRecord) -> str:
+    metadata = record.metadata
+    source = "；".join(
+        (
+            f"scope={_metadata_text(metadata.get('scope'))}",
+            f"source_user_id={_metadata_text(metadata.get('source_user_id'))}",
+            f"source_nickname={_metadata_text(metadata.get('source_nickname'))}",
+            f"conversation_id={_metadata_text(metadata.get('conversation_id'))}",
+            f"conversation_type={_metadata_text(metadata.get('conversation_type'))}",
+            f"kind={_metadata_text(metadata.get('kind'))}",
+        )
+    )
+    return f"- {record.content}\n  来源：{source}"
+
+
+def _metadata_text(value: object) -> str:
+    if value is None:
+        return "未知"
+    text = str(value).strip()
+    return text or "未知"
 
 
 def _display_nickname(nickname: str | None) -> str:

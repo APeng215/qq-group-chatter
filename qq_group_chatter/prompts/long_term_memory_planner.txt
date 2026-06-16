@@ -13,3 +13,6 @@
 
 已有 conversation 记忆（仅供内部决策，id 只能用于 update/delete 定位）：
 {conversation_memories_json}
+
+当前 conversation 内其他相关记忆（仅供内部决策，id 只能用于 update/delete 定位；新增他人事实或公共事实时优先写 conversation）：
+{global_memories_json}

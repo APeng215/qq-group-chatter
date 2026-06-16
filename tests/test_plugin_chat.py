@@ -6,6 +6,7 @@ from qq_group_chatter.models import PendingAssistantReply, build_group_conversat
 from qq_group_chatter.plugins.chat import (
     _context_from_event,
     _handle_regular_chat,
+    _message_text_from_event,
     _send_reply_and_record,
     should_handle_message,
 )
@@ -40,6 +41,27 @@ def test_should_handle_private_message():
 
 def test_should_handle_group_message_addressed_to_bot():
     assert should_handle_message(event(message_type="group", to_me=True), "hello") is True
+
+
+def test_message_text_from_event_keeps_image_placeholder():
+    source_event = event(
+        message=[
+            {"type": "image", "data": {"file": "abc.jpg"}},
+        ]
+    )
+
+    assert _message_text_from_event(source_event) == "[图片]"
+
+
+def test_message_text_from_event_keeps_text_and_image_placeholder():
+    source_event = event(
+        message=[
+            {"type": "text", "data": {"text": "看这个"}},
+            {"type": "image", "data": {"file": "abc.jpg"}},
+        ]
+    )
+
+    assert _message_text_from_event(source_event) == "看这个 [图片]"
 
 
 def test_context_from_group_event_uses_group_card_before_nickname(monkeypatch):

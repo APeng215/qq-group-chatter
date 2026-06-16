@@ -37,7 +37,7 @@ def test_builds_group_conversation_context():
         nickname="阿咳",
         timestamp=123.0,
     )
-    assert user_memory_id(context) == "qq_user:123456"
+    assert user_memory_id(context) == "qq_user:qq_group:888888:123456"
     assert conversation_memory_id(context) == "qq_conversation:qq_group:888888"
 
 
@@ -52,8 +52,26 @@ def test_builds_private_conversation_context():
     assert context.conversation_id == "qq_private:123456"
     assert context.conversation_type == "private"
     assert context.group_id is None
-    assert user_memory_id(context) == "qq_user:123456"
+    assert user_memory_id(context) == "qq_user:qq_private:123456:123456"
     assert conversation_memory_id(context) == "qq_conversation:qq_private:123456"
+
+
+def test_user_memory_id_is_isolated_by_conversation():
+    group_context = build_group_conversation_context(
+        group_id=888888,
+        user_id=123456,
+        message_id="m1",
+        nickname="阿咳",
+        timestamp=123.0,
+    )
+    private_context = build_private_conversation_context(
+        user_id=123456,
+        message_id="m2",
+        nickname="阿咳",
+        timestamp=456.0,
+    )
+
+    assert user_memory_id(group_context) != user_memory_id(private_context)
 
 
 def test_long_term_memory_bundle_renders_readable_prompt_section():
@@ -70,13 +88,42 @@ def test_long_term_memory_bundle_renders_readable_prompt_section():
 
     prompt_section = bundle.as_prompt_section(prompt_context())
 
-    assert prompt_section == (
-        "相关个人长期记忆（当前发言者 QQ号：123456，昵称：阿咳）：\n"
-        "- 无\n\n"
-        "相关会话长期记忆：\n"
-        "- 默认中文"
-    )
+    assert "相关个人长期记忆（当前发言者 QQ号：123456，昵称：阿咳）：\n- 无" in prompt_section
+    assert "相关会话长期记忆：\n- 默认中文" in prompt_section
+    assert "当前 conversation 内相关长期记忆" in prompt_section
+    assert prompt_section.endswith("- 无")
     assert "不应出现在 prompt" not in prompt_section
+
+
+def test_long_term_memory_bundle_renders_global_memories_with_source_metadata():
+    bundle = LongTermMemoryBundle(
+        user_memories=[],
+        conversation_memories=[],
+        global_memories=[
+            LongTermMemoryRecord(
+                id="mem-global-1",
+                content="小明在上大学",
+                metadata={
+                    "scope": "user",
+                    "kind": "other",
+                    "source_user_id": "654321",
+                    "source_nickname": "小明",
+                    "conversation_id": "qq_group:888888",
+                    "conversation_type": "group",
+                },
+            )
+        ],
+    )
+
+    prompt_section = bundle.as_prompt_section(prompt_context())
+
+    assert "当前 conversation 内相关长期记忆" in prompt_section
+    assert "- 小明在上大学" in prompt_section
+    assert (
+        "来源：scope=user；source_user_id=654321；source_nickname=小明；"
+        "conversation_id=qq_group:888888；conversation_type=group；kind=other"
+    ) in prompt_section
+    assert "不要把其他人的信息误当成当前发言者自己的信息" in prompt_section
 
 
 def test_long_term_memory_bundle_does_not_render_record_ids_or_metadata():
@@ -104,10 +151,10 @@ def test_long_term_memory_bundle_does_not_render_record_ids_or_metadata():
     assert "mem-user-1" not in prompt_section
     assert "mem-conv-1" not in prompt_section
     assert "mem0" not in prompt_section
-    assert "conversation" not in prompt_section
+    assert "scope=conversation" not in prompt_section
 
 
-def test_long_term_memory_bundle_renders_memory_times_as_local_time():
+def test_long_term_memory_bundle_omits_memory_times_from_prompt_context():
     bundle = LongTermMemoryBundle(
         user_memories=[
             LongTermMemoryRecord(
@@ -133,10 +180,13 @@ def test_long_term_memory_bundle_renders_memory_times_as_local_time():
 
     prompt_section = bundle.as_prompt_section(prompt_context())
 
-    assert "- 用户不吃辣（记录于 2026-06-15 21:13，最后出现 2026-06-15 21:54）" in prompt_section
-    assert "- 当前会话默认中文（记录于 2026-06-15 21:13，最后出现 2026-06-15 21:54）" in prompt_section
-    assert "21:13:49" not in prompt_section
-    assert "21:54:00" not in prompt_section
+    assert "- 用户不吃辣" in prompt_section
+    assert "- 当前会话默认中文" in prompt_section
+    assert "记录于" not in prompt_section
+    assert "最后出现" not in prompt_section
+    assert "2026-06-15" not in prompt_section
+    assert "21:13" not in prompt_section
+    assert "21:54" not in prompt_section
 
 
 def test_long_term_memory_bundle_keeps_legacy_records_without_times_readable():

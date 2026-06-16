@@ -33,7 +33,7 @@ if on_message is not None:
     async def handle_nonebot_message(bot: Bot, event: MessageEvent) -> None:
         if orchestrator is None:
             return
-        text = event.get_plaintext()
+        text = _message_text_from_event(event)
         if not should_handle_message(event, text):
             return
         context = _context_from_event(event)
@@ -81,6 +81,33 @@ def _sender_text(sender, field: str) -> str | None:
         return None
     text = str(value).strip()
     return text or None
+
+
+def _message_text_from_event(event) -> str:
+    segments = getattr(event, "message", None)
+    if segments is None:
+        return str(event.get_plaintext()).strip()
+
+    parts: list[str] = []
+    for segment in segments:
+        segment_type = _segment_value(segment, "type")
+        data = _segment_value(segment, "data") or {}
+        if segment_type == "text":
+            text = _segment_value(data, "text")
+            if text is not None and str(text).strip():
+                parts.append(str(text).strip())
+        elif segment_type == "image":
+            parts.append("[图片]")
+
+    if parts:
+        return " ".join(parts)
+    return str(event.get_plaintext()).strip()
+
+
+def _segment_value(segment, field: str):
+    if isinstance(segment, dict):
+        return segment.get(field)
+    return getattr(segment, field, None)
 
 
 def should_handle_message(event, text: str) -> bool:

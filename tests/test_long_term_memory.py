@@ -1,17 +1,22 @@
 import asyncio
 
+from qq_group_chatter.models import build_private_conversation_context
 from qq_group_chatter.models import (
     LongTermMemoryBundle,
     LongTermMemoryIngestionJob,
     LongTermMemoryOperation,
     LongTermMemoryRecord,
     build_group_conversation_context,
+    user_memory_id,
 )
 from qq_group_chatter.services.long_term_memory import (
     LongTermMemorySearchError,
     LongTermMemoryService,
     normalize_mem0_records,
 )
+
+
+GROUP_USER_MEMORY_ID = "qq_user:qq_group:888888:123456"
 
 
 class FakeMem0Client:
@@ -35,7 +40,13 @@ class FakeMem0Client:
             self.search_calls.append(call)
         if self.search_raises:
             raise self.search_raises
-        return self.search_results.get(filters["user_id"], [])
+        if filters is None:
+            key = None
+        elif "user_id" in filters:
+            key = filters["user_id"]
+        else:
+            key = tuple(sorted(filters.items()))
+        return self.search_results.get(key, [])
 
     def add(self, messages, *, user_id, metadata=None, infer=True):
         self.add_calls.append(
@@ -84,13 +95,22 @@ class FakePlanner:
         self.raises = raises
         self.calls = []
 
-    async def plan(self, *, user_message, context, user_memories, conversation_memories):
+    async def plan(
+        self,
+        *,
+        user_message,
+        context,
+        user_memories,
+        conversation_memories,
+        global_memories=None,
+    ):
         self.calls.append(
             {
                 "user_message": user_message,
                 "context": context,
                 "user_memories": user_memories,
                 "conversation_memories": conversation_memories,
+                "global_memories": global_memories or [],
             }
         )
         if self.raises:
@@ -129,7 +149,7 @@ def test_long_term_memory_prompt_section_labels_current_user_identity():
 async def test_search_queries_user_and_conversation_memories():
     mem0 = FakeMem0Client()
     mem0.search_results = {
-        "qq_user:123456": [
+        GROUP_USER_MEMORY_ID: [
             {"id": "mem-user-1", "memory": "用户不吃辣", "metadata": {"kind": "preference"}}
         ],
         "qq_conversation:qq_group:888888": [
@@ -137,6 +157,18 @@ async def test_search_queries_user_and_conversation_memories():
                 "id": "mem-conv-1",
                 "memory": "当前会话默认中文",
                 "metadata": {"kind": "conversation_rule"},
+            }
+        ],
+        (("conversation_id", "qq_group:888888"),): [
+            {
+                "id": "mem-other-user-1",
+                "memory": "小明在上大学",
+                "metadata": {
+                    "scope": "user",
+                    "kind": "other",
+                    "conversation_id": "qq_group:888888",
+                    "user_id": "qq_user:qq_group:888888:654321",
+                },
             }
         ],
     }
@@ -158,11 +190,136 @@ async def test_search_queries_user_and_conversation_memories():
             metadata={"kind": "conversation_rule"},
         )
     ]
-    assert [call["filters"]["user_id"] for call in mem0.search_calls] == [
-        "qq_user:123456",
+    assert bundle.global_memories == [
+        LongTermMemoryRecord(
+            id="mem-other-user-1",
+            content="小明在上大学",
+            metadata={
+                "scope": "user",
+                "kind": "other",
+                "conversation_id": "qq_group:888888",
+                "user_id": "qq_user:qq_group:888888:654321",
+            },
+        )
+    ]
+    assert [call["filters"]["user_id"] for call in mem0.search_calls[:2]] == [
+        GROUP_USER_MEMORY_ID,
         "qq_conversation:qq_group:888888",
     ]
-    assert [call["top_k"] for call in mem0.search_calls] == [5, 5]
+    assert mem0.search_calls[2] == {
+        "query": "晚上吃川菜吗",
+        "filters": {"conversation_id": "qq_group:888888"},
+        "top_k": 5,
+    }
+    assert [call["top_k"] for call in mem0.search_calls] == [5, 5, 5]
+
+
+async def test_search_dedupes_global_memories_by_id():
+    mem0 = FakeMem0Client()
+    mem0.search_results = {
+        GROUP_USER_MEMORY_ID: [{"id": "mem-user-1", "memory": "用户不吃辣"}],
+        "qq_conversation:qq_group:888888": [
+            {"id": "mem-conv-1", "memory": "当前会话默认中文"}
+        ],
+        (("conversation_id", "qq_group:888888"),): [
+            {"id": "mem-user-1", "memory": "用户不吃辣"},
+            {"id": "mem-conv-1", "memory": "当前会话默认中文"},
+            {
+                "id": "mem-other-1",
+                "memory": "群内还聊过考试",
+                "metadata": {
+                    "scope": "conversation",
+                    "conversation_id": "qq_group:888888",
+                    "user_id": "qq_conversation:qq_group:888888",
+                },
+            },
+            {
+                "memory": "无 id 的记忆保留",
+                "metadata": {
+                    "scope": "conversation",
+                    "conversation_id": "qq_group:888888",
+                    "user_id": "qq_conversation:qq_group:888888",
+                },
+            },
+        ],
+    }
+    service = LongTermMemoryService(mem0_client=mem0, planner=FakePlanner())
+
+    bundle = await service.search("考试", context())
+
+    assert [record.id for record in bundle.global_memories] == ["mem-other-1", None]
+
+
+async def test_search_filters_legacy_global_user_owner():
+    mem0 = FakeMem0Client()
+    mem0.search_results = {
+        (("conversation_id", "qq_group:888888"),): [
+            {
+                "id": "legacy-user",
+                "memory": "旧个人记忆",
+                "metadata": {
+                    "scope": "user",
+                    "conversation_id": "qq_group:888888",
+                    "user_id": "qq_user:123456",
+                },
+            },
+            {
+                "id": "new-user",
+                "memory": "新个人记忆",
+                "metadata": {
+                    "scope": "user",
+                    "conversation_id": "qq_group:888888",
+                    "user_id": "qq_user:qq_group:888888:654321",
+                },
+            },
+        ],
+    }
+    service = LongTermMemoryService(mem0_client=mem0, planner=FakePlanner())
+
+    bundle = await service.search("记忆", context())
+
+    assert [record.id for record in bundle.global_memories] == ["new-user"]
+
+
+async def test_search_does_not_query_legacy_user_owner():
+    mem0 = FakeMem0Client()
+    mem0.search_results = {
+        "qq_user:123456": [
+            {"id": "legacy-user", "memory": "旧个人记忆", "metadata": {"kind": "preference"}}
+        ],
+        GROUP_USER_MEMORY_ID: [
+            {"id": "new-user", "memory": "新个人记忆", "metadata": {"kind": "preference"}}
+        ],
+    }
+    service = LongTermMemoryService(mem0_client=mem0, planner=FakePlanner())
+
+    bundle = await service.search("记忆", context())
+
+    assert bundle.user_memories == [
+        LongTermMemoryRecord(
+            id="new-user",
+            content="新个人记忆",
+            metadata={"kind": "preference"},
+        )
+    ]
+    assert [call["filters"]["user_id"] for call in mem0.search_calls[:2]] == [
+        GROUP_USER_MEMORY_ID,
+        "qq_conversation:qq_group:888888",
+    ]
+
+
+def test_user_memory_owner_differs_between_group_and_private_conversations():
+    group_context = context()
+    private_context = build_private_conversation_context(
+        user_id=123456,
+        message_id="m2",
+        nickname="阿咳",
+        timestamp=456.0,
+    )
+
+    assert user_memory_id(group_context) == GROUP_USER_MEMORY_ID
+    assert user_memory_id(private_context) == "qq_user:qq_private:123456:123456"
+    assert user_memory_id(group_context) != user_memory_id(private_context)
 
 
 async def test_search_raises_when_mem0_search_fails(monkeypatch):
@@ -288,7 +445,7 @@ async def test_ingestion_calls_planner_once_and_adds_operation_asynchronously():
     assert mem0.add_calls == [
         {
             "messages": [{"role": "user", "content": "用户不吃辣"}],
-            "user_id": "qq_user:123456",
+            "user_id": GROUP_USER_MEMORY_ID,
             "metadata": {
                 "source": "qq",
                 "conversation_id": "qq_group:888888",
@@ -306,7 +463,7 @@ async def test_ingestion_calls_planner_once_and_adds_operation_asynchronously():
     ]
     assert mem0.search_calls == []
     assert mem0.get_all_calls == [
-        {"filters": {"user_id": "qq_user:123456"}, "top_k": 1000}
+        {"filters": {"user_id": GROUP_USER_MEMORY_ID}, "top_k": 1000}
     ]
 
 
@@ -492,6 +649,97 @@ async def test_ingestion_update_drops_mem0_reserved_timestamp_metadata():
     assert metadata["source_created_at"] == 1781529229.0
     assert "created_at" not in metadata
     assert "updated_at" not in metadata
+
+
+async def test_ingestion_updates_global_user_memory():
+    mem0 = FakeMem0Client()
+    planner = FakePlanner(
+        [
+            LongTermMemoryOperation(
+                action="update",
+                scope="user",
+                target_id="mem-global-user-1",
+                content="小明已经大学毕业",
+                kind="other",
+                confidence=0.92,
+            )
+        ]
+    )
+    service = LongTermMemoryService(mem0_client=mem0, planner=planner)
+    await service.start()
+
+    await service.enqueue_ingestion(
+        LongTermMemoryIngestionJob(
+            context=context(),
+            user_message="小明已经毕业了",
+            existing_memories=LongTermMemoryBundle(
+                user_memories=[],
+                conversation_memories=[],
+                global_memories=[
+                    LongTermMemoryRecord(
+                        id="mem-global-user-1",
+                        content="小明在上大学",
+                        metadata={
+                            "scope": "user",
+                            "kind": "other",
+                            "conversation_id": "qq_group:888888",
+                            "user_id": "qq_user:qq_group:888888:654321",
+                        },
+                    )
+                ],
+            ),
+        )
+    )
+    await asyncio.wait_for(service.join(), timeout=1)
+    await service.stop()
+
+    assert mem0.update_calls[0]["memory_id"] == "mem-global-user-1"
+    assert mem0.update_calls[0]["data"] == "小明已经大学毕业"
+
+
+async def test_ingestion_deletes_global_conversation_memory():
+    mem0 = FakeMem0Client()
+    planner = FakePlanner(
+        [
+            LongTermMemoryOperation(
+                action="delete",
+                scope="conversation",
+                target_id="mem-global-conv-1",
+                content="",
+                kind="other",
+                confidence=0.92,
+            )
+        ]
+    )
+    service = LongTermMemoryService(mem0_client=mem0, planner=planner)
+    await service.start()
+
+    await service.enqueue_ingestion(
+        LongTermMemoryIngestionJob(
+            context=context(),
+            user_message="忘掉那个旧项目",
+            existing_memories=LongTermMemoryBundle(
+                user_memories=[],
+                conversation_memories=[],
+                global_memories=[
+                    LongTermMemoryRecord(
+                        id="mem-global-conv-1",
+                        content="当前会话曾聊过旧项目",
+                        metadata={
+                            "scope": "conversation",
+                            "kind": "other",
+                            "conversation_id": "qq_group:888888",
+                            "user_id": "qq_conversation:qq_group:888888",
+                        },
+                    )
+                ],
+            ),
+        )
+    )
+    await asyncio.wait_for(service.join(), timeout=1)
+    await service.stop()
+
+    assert mem0.delete_calls == [{"memory_id": "mem-global-conv-1"}]
 
 
 async def test_ingestion_adds_when_planner_returns_add():
@@ -925,7 +1173,7 @@ async def test_planner_errors_do_not_write_memories(monkeypatch):
 async def test_prunes_oldest_memories_when_scope_exceeds_limit():
     mem0 = FakeMem0Client()
     mem0.get_all_results = {
-        "qq_user:123456": {
+        GROUP_USER_MEMORY_ID: {
             "results": [
                 {
                     "id": "oldest",
@@ -976,7 +1224,7 @@ async def test_prunes_oldest_memories_when_scope_exceeds_limit():
 async def test_does_not_prune_when_scope_is_within_limit():
     mem0 = FakeMem0Client()
     mem0.get_all_results = {
-        "qq_user:123456": {
+        GROUP_USER_MEMORY_ID: {
             "results": [
                 {
                     "id": "memory-1",
@@ -1044,14 +1292,19 @@ async def test_ingestion_falls_back_to_mem0_search_without_existing_memories():
     assert mem0.search_calls == [
         {
             "query": "这个群默认说中文",
-            "filters": {"user_id": "qq_user:123456"},
+            "filters": {"user_id": GROUP_USER_MEMORY_ID},
             "top_k": 5,
         },
         {
             "query": "这个群默认说中文",
             "filters": {"user_id": "qq_conversation:qq_group:888888"},
             "top_k": 5,
-        }
+        },
+        {
+            "query": "这个群默认说中文",
+            "filters": {"conversation_id": "qq_group:888888"},
+            "top_k": 5,
+        },
     ]
 
 

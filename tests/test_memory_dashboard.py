@@ -175,6 +175,22 @@ def test_memory_dashboard_html_preserves_trace_detail_expansion_on_refresh():
     assert "data-detail-key" in html
 
 
+def test_memory_dashboard_html_renders_trace_text_newlines_readably():
+    html = memory_dashboard_html({"summary": {"total": 0}, "memories": [], "errors": []})
+
+    assert "formatTraceText" in html
+    assert 'replace(/\\\\n/g, "\\n")' in html
+    assert '<pre>${formatTraceText(item.response_text || "")}</pre>' in html
+    assert "<pre>${formatTraceText(messages)}</pre>" in html
+
+
+def test_memory_dashboard_html_does_not_poll_llm_traces():
+    html = memory_dashboard_html({"summary": {"total": 0}, "memories": [], "errors": []})
+
+    assert "setInterval" not in html
+    assert "traceRefreshEl.addEventListener" in html
+
+
 async def test_llm_trace_dashboard_api_returns_snapshot_and_clear_response():
     application = FakeApplication()
     application.llm_trace_store = LLMTraceStore(path=trace_path("traces.jsonl"), max_records=10)

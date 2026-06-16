@@ -49,15 +49,18 @@ class LongTermMemoryPlanner:
         context: ConversationContext,
         user_memories: list[LongTermMemoryRecord],
         conversation_memories: list[LongTermMemoryRecord],
+        global_memories: list[LongTermMemoryRecord] | None = None,
     ) -> list[LongTermMemoryOperation]:
         if self._llm is None:
             return []
+        resolved_global_memories = global_memories or []
 
         prompt = self._build_prompt(
             user_message=user_message,
             context=context,
             user_memories=user_memories,
             conversation_memories=conversation_memories,
+            global_memories=resolved_global_memories,
         )
         with observe_duration(
             metric=LLM_LATENCY_SECONDS,
@@ -81,6 +84,7 @@ class LongTermMemoryPlanner:
             raw,
             user_memories=user_memories,
             conversation_memories=conversation_memories,
+            global_memories=resolved_global_memories,
         )
 
     def _build_prompt(
@@ -90,6 +94,7 @@ class LongTermMemoryPlanner:
         context: ConversationContext,
         user_memories: list[LongTermMemoryRecord],
         conversation_memories: list[LongTermMemoryRecord],
+        global_memories: list[LongTermMemoryRecord],
     ) -> str:
         return PLANNER_PROMPT_TEMPLATE.format(
             conversation_type=context.conversation_type,
@@ -98,6 +103,7 @@ class LongTermMemoryPlanner:
             user_message=user_message,
             user_memories_json=_records_json(user_memories),
             conversation_memories_json=_records_json(conversation_memories),
+            global_memories_json=_records_json(global_memories),
         )
 
     def _parse_operations(
@@ -106,6 +112,7 @@ class LongTermMemoryPlanner:
         *,
         user_memories: list[LongTermMemoryRecord],
         conversation_memories: list[LongTermMemoryRecord],
+        global_memories: list[LongTermMemoryRecord],
     ) -> list[LongTermMemoryOperation]:
         data = _loads_json_object(raw)
         if not isinstance(data, dict):
@@ -115,9 +122,18 @@ class LongTermMemoryPlanner:
             return []
 
         valid_ids_by_scope = {
-            "user": {record.id for record in user_memories if record.id is not None},
+            "user": {
+                record.id
+                for record in [*user_memories, *_records_for_scope(global_memories, "user")]
+                if record.id is not None
+            },
             "conversation": {
-                record.id for record in conversation_memories if record.id is not None
+                record.id
+                for record in [
+                    *conversation_memories,
+                    *_records_for_scope(global_memories, "conversation"),
+                ]
+                if record.id is not None
             },
         }
         operations: list[LongTermMemoryOperation] = []
@@ -143,6 +159,7 @@ def _records_json(records: list[LongTermMemoryRecord]) -> str:
         [
             {
                 "id": record.id,
+                "scope": record.metadata.get("scope"),
                 "content": record.content,
                 "kind": record.metadata.get("kind"),
             }
@@ -150,6 +167,13 @@ def _records_json(records: list[LongTermMemoryRecord]) -> str:
         ],
         ensure_ascii=False,
     )
+
+
+def _records_for_scope(
+    records: list[LongTermMemoryRecord],
+    scope: str,
+) -> list[LongTermMemoryRecord]:
+    return [record for record in records if record.metadata.get("scope") == scope]
 
 
 def _combined_prompt(prompt: str) -> str:

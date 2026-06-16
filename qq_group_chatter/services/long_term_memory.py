@@ -84,17 +84,24 @@ class LongTermMemoryService:
         MEMORY_INGESTION_QUEUE_SIZE.set(self._queue.qsize())
 
     async def search(self, user_message: str, context: ConversationContext) -> LongTermMemoryBundle:
-        user_memories, conversation_memories = await asyncio.gather(
+        user_memories, conversation_memories, global_memories = await asyncio.gather(
             self._search_scope(user_message, user_memory_id(context), "user"),
             self._search_scope(
                 user_message,
                 conversation_memory_id(context),
                 "conversation",
             ),
+            self._search_conversation_global(user_message, context),
+        )
+        global_memories = _dedupe_global_memories(
+            _filter_conversation_global_memories(global_memories, context),
+            user_memories,
+            conversation_memories,
         )
         return LongTermMemoryBundle(
             user_memories=user_memories,
             conversation_memories=conversation_memories,
+            global_memories=global_memories,
         )
 
     async def _run_worker(self) -> None:
@@ -144,6 +151,7 @@ class LongTermMemoryService:
                 context=job.context,
                 user_memories=existing_memories.user_memories,
                 conversation_memories=existing_memories.conversation_memories,
+                global_memories=existing_memories.global_memories,
             )
         except Exception as exc:
             record_error("long_term_memory_planner", exc)
@@ -153,6 +161,7 @@ class LongTermMemoryService:
         known_records = LongTermMemoryBundle(
             user_memories=list(existing_memories.user_memories),
             conversation_memories=list(existing_memories.conversation_memories),
+            global_memories=list(existing_memories.global_memories),
         )
         for operation in planned_operations:
             if not self._is_valid_operation(operation):
@@ -360,6 +369,32 @@ class LongTermMemoryService:
                 f"Failed to search {scope} long-term memory."
             ) from exc
 
+    async def _search_conversation_global(
+        self,
+        query: str,
+        context: ConversationContext,
+        limit: int = 5,
+    ) -> list[LongTermMemoryRecord]:
+        try:
+            with observe_duration(
+                metric=MEM0_SEARCH_LATENCY_SECONDS,
+                labels={"scope": "global"},
+                log_name="mem0_search",
+                log_fields={"memory_scope": "global"},
+            ):
+                raw = await asyncio.to_thread(
+                    self._mem0.search,
+                    query,
+                    filters={"conversation_id": context.conversation_id},
+                    top_k=limit,
+                )
+            return normalize_mem0_records(raw)
+        except Exception as exc:
+            record_error("mem0_search", exc)
+            raise LongTermMemorySearchError(
+                "Failed to search global long-term memory."
+            ) from exc
+
     def _is_valid_operation(self, operation: LongTermMemoryOperation) -> bool:
         if operation.action not in {"add", "update", "delete", "skip"}:
             return False
@@ -390,9 +425,23 @@ class LongTermMemoryService:
         if bundle is None:
             return None
         if scope == "user":
-            return bundle.user_memories
+            return [
+                *bundle.user_memories,
+                *[
+                    record
+                    for record in bundle.global_memories
+                    if record.metadata.get("scope") == "user"
+                ],
+            ]
         if scope == "conversation":
-            return bundle.conversation_memories
+            return [
+                *bundle.conversation_memories,
+                *[
+                    record
+                    for record in bundle.global_memories
+                    if record.metadata.get("scope") == "conversation"
+                ],
+            ]
         return []
 
     def _is_duplicate(self, content: str, existing_memories: list[str]) -> bool:
@@ -496,6 +545,46 @@ def _find_record(
         if record.id == record_id:
             return record
     return None
+
+
+def _dedupe_global_memories(
+    global_memories: list[LongTermMemoryRecord],
+    *preferred_groups: list[LongTermMemoryRecord],
+) -> list[LongTermMemoryRecord]:
+    preferred_ids = {
+        record.id
+        for group in preferred_groups
+        for record in group
+        if record.id is not None
+    }
+    return [
+        record
+        for record in global_memories
+        if record.id is None or record.id not in preferred_ids
+    ]
+
+
+def _filter_conversation_global_memories(
+    records: list[LongTermMemoryRecord],
+    context: ConversationContext,
+) -> list[LongTermMemoryRecord]:
+    return [
+        record
+        for record in records
+        if record.metadata.get("conversation_id") == context.conversation_id
+        and _is_current_conversation_owner(record, context)
+    ]
+
+
+def _is_current_conversation_owner(
+    record: LongTermMemoryRecord,
+    context: ConversationContext,
+) -> bool:
+    owner_id = record.metadata.get("user_id")
+    if owner_id is None:
+        return True
+    owner = str(owner_id)
+    return owner.startswith(f"qq_user:{context.conversation_id}:") or owner == conversation_memory_id(context)
 
 
 def _new_memory_metadata(
