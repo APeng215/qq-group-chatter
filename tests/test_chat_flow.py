@@ -156,6 +156,7 @@ async def test_orchestrator_returns_pending_reply_without_recording_assistant_me
     assert long_term.enqueued[0].user_message == "我不吃辣"
     assert long_term.search_calls[0]["user_message"] == "我不吃辣"
     assert [item.content for item in responder.calls[0]["short_term_messages"]] == ["我不吃辣"]
+    assert [item.content for item in long_term.enqueued[0].short_term_messages] == ["我不吃辣"]
     assert responder.calls[0]["long_term_memory"].user_memories[0].content == "用户不吃辣"
     assert long_term.enqueued[0].existing_memories is responder.calls[0]["long_term_memory"]
     assert events == [

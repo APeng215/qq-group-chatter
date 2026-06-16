@@ -45,10 +45,12 @@
 - 长期记忆写入走后台 worker，不能阻塞用户回复；写入前必须做候选校验和重复抑制。
 - 长期记忆 scope 只保留 `user` 和 `conversation`；不要引入 group-user 组合记忆，除非用户重新提出。
 - 长期 ID：
-  - 用户：`qq_user:{user_id}`
+  - 用户：`qq_user:{conversation_id}:{user_id}`
   - 会话：`qq_conversation:{conversation_id}`
 - 长期记忆 planner：`qq_group_chatter/services/long_term_memory_planner.py`，默认 `deepseek-v4-pro` + `thinking=disabled`；一次调用内完成提取判断和 add/update/skip 决策，不直接给聊天 Agent。
 - 长期记忆写入 Mem0 时使用 `infer=False`；记忆提取、合并和跳过决策由项目自己的 `LongTermMemoryPlanner` 负责，不依赖 Mem0 内部 LLM 自动推理。
+- Mem0 `search()` / `get_all()` 的 `filters` 必须至少包含 `user_id`、`agent_id`、`run_id` 之一；不要只用 `conversation_id` 调 Mem0。
+- 查询当前用户和当前会话长期记忆时用 `filters={"user_id": ...}`；查询同会话全局相关记忆时用 `filters={"user_id": "*", "conversation_id": context.conversation_id}`，再由项目代码过滤 owner 和去重。
 - 不要提取手机号、密码、token、api key、地址等敏感内容。
 
 ## DeepSeek 和 Mem0

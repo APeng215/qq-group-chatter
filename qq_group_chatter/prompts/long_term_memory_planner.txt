@@ -8,6 +8,9 @@
 用户消息：
 {user_message}
 
+短期对话上下文（只辅助理解本轮用户消息的指代、承接、纠错语义；不要因为这里出现过就逐条写入长期记忆）：
+{short_term_history}
+
 已有 user 记忆（仅供内部决策，id 只能用于 update/delete 定位）：
 {user_memories_json}
 

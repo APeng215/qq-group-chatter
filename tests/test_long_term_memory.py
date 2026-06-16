@@ -2,6 +2,7 @@ import asyncio
 
 from qq_group_chatter.models import build_private_conversation_context
 from qq_group_chatter.models import (
+    ChatMessage,
     LongTermMemoryBundle,
     LongTermMemoryIngestionJob,
     LongTermMemoryOperation,
@@ -109,6 +110,7 @@ class FakePlanner:
         user_memories,
         conversation_memories,
         global_memories=None,
+        short_term_messages=None,
     ):
         self.calls.append(
             {
@@ -117,6 +119,7 @@ class FakePlanner:
                 "user_memories": user_memories,
                 "conversation_memories": conversation_memories,
                 "global_memories": global_memories or [],
+                "short_term_messages": short_term_messages or [],
             }
         )
         if self.raises:
@@ -471,6 +474,45 @@ async def test_ingestion_calls_planner_once_and_adds_operation_asynchronously():
     assert mem0.get_all_calls == [
         {"filters": {"user_id": GROUP_USER_MEMORY_ID}, "top_k": 1000}
     ]
+
+
+async def test_ingestion_passes_short_term_messages_to_planner():
+    mem0 = FakeMem0Client()
+    planner = FakePlanner()
+    service = LongTermMemoryService(mem0_client=mem0, planner=planner)
+    short_term_messages = [
+        ChatMessage(
+            conversation_id="qq_group:888888",
+            role="assistant",
+            content="上次你说晚饭想吃咖喱",
+            user_id=None,
+            nickname=None,
+            message_id=None,
+            timestamp=122.0,
+        ),
+        ChatMessage(
+            conversation_id="qq_group:888888",
+            role="user",
+            content="对，我还是想吃那个",
+            user_id="123456",
+            nickname="阿咳",
+            message_id="m1",
+            timestamp=123.0,
+        ),
+    ]
+
+    await service.enqueue_ingestion(
+        LongTermMemoryIngestionJob(
+            context=context(),
+            user_message="对，我还是想吃那个",
+            short_term_messages=short_term_messages,
+            existing_memories=LongTermMemoryBundle(user_memories=[], conversation_memories=[]),
+        )
+    )
+    job = await service._queue.get()
+    await service._process_job(job)
+
+    assert planner.calls[0]["short_term_messages"] is short_term_messages
 
 
 async def test_ingestion_uses_job_existing_memories_for_duplicate_skip_without_search():

@@ -152,6 +152,7 @@ class LongTermMemoryService:
                 user_memories=existing_memories.user_memories,
                 conversation_memories=existing_memories.conversation_memories,
                 global_memories=existing_memories.global_memories,
+                short_term_messages=job.short_term_messages,
             )
         except Exception as exc:
             record_error("long_term_memory_planner", exc)

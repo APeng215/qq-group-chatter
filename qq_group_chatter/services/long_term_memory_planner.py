@@ -5,6 +5,7 @@ import re
 from typing import Any
 
 from qq_group_chatter.models import (
+    ChatMessage,
     ConversationContext,
     LongTermMemoryOperation,
     LongTermMemoryRecord,
@@ -50,6 +51,7 @@ class LongTermMemoryPlanner:
         user_memories: list[LongTermMemoryRecord],
         conversation_memories: list[LongTermMemoryRecord],
         global_memories: list[LongTermMemoryRecord] | None = None,
+        short_term_messages: list[ChatMessage] | None = None,
     ) -> list[LongTermMemoryOperation]:
         if self._llm is None:
             return []
@@ -61,6 +63,7 @@ class LongTermMemoryPlanner:
             user_memories=user_memories,
             conversation_memories=conversation_memories,
             global_memories=resolved_global_memories,
+            short_term_messages=short_term_messages or [],
         )
         with observe_duration(
             metric=LLM_LATENCY_SECONDS,
@@ -95,12 +98,14 @@ class LongTermMemoryPlanner:
         user_memories: list[LongTermMemoryRecord],
         conversation_memories: list[LongTermMemoryRecord],
         global_memories: list[LongTermMemoryRecord],
+        short_term_messages: list[ChatMessage],
     ) -> str:
         return PLANNER_PROMPT_TEMPLATE.format(
             conversation_type=context.conversation_type,
             current_user_qq=context.user_id,
             current_user_nickname=_display_nickname(context.nickname),
             user_message=user_message,
+            short_term_history=_format_short_term_history(short_term_messages),
             user_memories_json=_records_json(user_memories),
             conversation_memories_json=_records_json(conversation_memories),
             global_memories_json=_records_json(global_memories),
@@ -167,6 +172,22 @@ def _records_json(records: list[LongTermMemoryRecord]) -> str:
         ],
         ensure_ascii=False,
     )
+
+
+def _format_short_term_history(messages: list[ChatMessage]) -> str:
+    if not messages:
+        return "无"
+    lines = []
+    for message in messages:
+        speaker = _message_speaker(message)
+        lines.append(f"- {speaker}：{message.content}")
+    return "\n".join(lines)
+
+
+def _message_speaker(message: ChatMessage) -> str:
+    if message.role == "assistant":
+        return "assistant"
+    return _display_nickname(message.nickname)
 
 
 def _records_for_scope(

@@ -92,6 +92,7 @@ class LongTermMemoryBundle:
 class LongTermMemoryIngestionJob:
     context: ConversationContext
     user_message: str
+    short_term_messages: list[ChatMessage] = field(default_factory=list)
     existing_memories: LongTermMemoryBundle | None = None
 
 

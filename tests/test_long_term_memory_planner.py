@@ -1,4 +1,5 @@
 from qq_group_chatter.models import (
+    ChatMessage,
     LongTermMemoryOperation,
     LongTermMemoryRecord,
     build_group_conversation_context,
@@ -119,6 +120,43 @@ async def test_planner_returns_empty_operations_for_empty_or_non_json_response()
     )
 
     assert operations == []
+
+
+async def test_planner_prompt_includes_short_term_context_as_auxiliary_history():
+    llm = FakePlannerLLM({"operations": []})
+    planner = LongTermMemoryPlanner(llm=llm)
+
+    await planner.plan(
+        user_message="对，我还是想吃那个",
+        context=context(),
+        user_memories=[],
+        conversation_memories=[],
+        short_term_messages=[
+            ChatMessage(
+                conversation_id="qq_group:888888",
+                role="assistant",
+                content="上次你说晚饭想吃咖喱",
+                user_id=None,
+                nickname=None,
+                message_id=None,
+                timestamp=122.0,
+            ),
+            ChatMessage(
+                conversation_id="qq_group:888888",
+                role="user",
+                content="对，我还是想吃那个",
+                user_id="123456",
+                nickname="阿咳",
+                message_id="m1",
+                timestamp=123.0,
+            ),
+        ],
+    )
+
+    assert "短期对话上下文" in llm.prompts[0]
+    assert "assistant：上次你说晚饭想吃咖喱" in llm.prompts[0]
+    assert "阿咳：对，我还是想吃那个" in llm.prompts[0]
+    assert "只辅助理解本轮用户消息" in llm.prompts[0]
 
 
 async def test_planner_skips_invalid_operations_and_invalid_update_target():

@@ -124,6 +124,7 @@ class ChatOrchestrator:
                         LongTermMemoryIngestionJob(
                             context=context,
                             user_message=content,
+                            short_term_messages=short_term_messages,
                             existing_memories=long_term_memory,
                         )
                     )
