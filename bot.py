@@ -11,11 +11,10 @@ driver = nonebot.get_driver()
 driver.register_adapter(OneBotV11Adapter)
 nonebot.load_plugin("qq_group_chatter.plugins.chat")
 
-from qq_group_chatter.plugins.chat import setup_orchestrator, setup_search_service
+from qq_group_chatter.plugins.chat import setup_orchestrator
 
 application = create_default_application()
 setup_orchestrator(application.orchestrator)
-setup_search_service(application.web_search)
 setup_memory_dashboard(driver, application)
 
 

@@ -14,7 +14,7 @@
 - `create_default_orchestrator()` 只用于测试或显式自定义装配；直接用它不会自动启动长期记忆 worker。
 - NoneBot 插件入口：`qq_group_chatter/plugins/chat.py`。
 - 主编排：`qq_group_chatter/orchestrator.py`。
-- 联网搜索服务：`qq_group_chatter/services/web_search.py`，由 `create_default_application()` 装配后通过 `setup_search_service()` 注入插件。
+- 联网搜索服务：`qq_group_chatter/services/web_search.py`，由 `create_default_application()` 装配后注入 `ChatOrchestrator`。
 - 群聊和私聊都先构造成 `ConversationContext`。
 
 主链路顺序保持：
@@ -29,7 +29,7 @@
 8. 发送回复
 9. 把 assistant 回复写入短期记忆
 
-搜索消息是普通聊天前的插件级分支：`plugins/chat.py` 会先用 `parse_search_command()` 判断是否为搜索触发词；如果是，调用 `WebSearchService.search_reply()` 并发送搜索回复，不进入 `ChatOrchestrator.handle_message()` 的普通聊天链路。
+联网搜索是普通聊天链路里的补充资料步骤：`ChatAgent` 先用 DeepSeek JSON Output 返回 `reply` 或 `web_search` 决策；如果是 `web_search`，`ChatOrchestrator` 先发送模型生成的 `notice`，再调用 `WebSearchService.search_sources()` 获取 Tavily 来源，最后回到 `ChatAgent.generate_grounded_search_reply()` 用神奈口吻回答。
 
 长期记忆 planner 只看用户消息；不要把 assistant 回复喂给长期记忆处理链路。
 
@@ -66,15 +66,14 @@
 
 ## 联网搜索
 
-- 搜索入口在 `qq_group_chatter/services/web_search.py`；插件层在普通聊天前拦截搜索触发词。
-- 只使用低风险中文触发词：`搜一下`、`搜索`、`查一下`。不要新增 slash 命令，避免和 QQ/NoneBot 命令体系或风控行为混在一起。
+- 搜索入口在 `qq_group_chatter/services/web_search.py`；插件层不再拦截搜索触发词，所有消息都先进入普通聊天链路。
+- 即使用户说“搜一下/搜索/查一下”，也只是普通聊天内容；是否联网由 `ChatAgent` 的结构化 `web_search` 决策决定。不要重新新增 slash 命令或插件级硬搜索分支。
 - 默认搜索 provider 是 Tavily；`WEB_SEARCH_ENABLED=true` 时需要 `TAVILY_API_KEY`，否则搜索服务初始化会失败。
 - 默认 Tavily 参数：`WEB_SEARCH_DEPTH=basic`、`WEB_SEARCH_MAX_RESULTS=3`、`WEB_SEARCH_INCLUDE_RAW_CONTENT=markdown`、`WEB_SEARCH_INCLUDE_ANSWER=false`、`WEB_SEARCH_TIMEOUT_SECONDS=8`。
-- 搜索回答由 `SearchAnswerAgent` 基于网页 `raw_content` 生成，不直接转发 Tavily 的 `answer`，也不默认暴露 URL。
-- 搜索回答模型默认 `WEB_SEARCH_ANSWER_MODEL=deepseek-v4-pro`、`WEB_SEARCH_ANSWER_THINKING=enabled`；不要重新加默认 `max_tokens` 上限，除非用户明确要求。
-- `WEB_SEARCH_INCLUDE_URLS=false` 时 prompt 和回复都不应包含 URL；如需展示 URL，必须显式打开该环境变量。
+- Tavily 只提供网页来源和 `raw_content`；自动搜索最终回复由 `ChatAgent` 基于 `chat_search_grounded.txt` 生成。
+- 自动搜索默认不向 prompt 暴露 URL；如需展示 URL，应先确认需求并更新 grounded prompt 与来源格式化逻辑。
 - 每条来源正文默认按 `WEB_SEARCH_MAX_RAW_CONTENT_CHARS_PER_RESULT=3000` 截断；prompt 里看到的是网页正文片段，不保证是完整页面。
-- 搜索上下文不写入长期记忆；搜索回复只在发送成功后作为 assistant 回复进入短期记忆。
+- 搜索上下文不写入长期记忆；搜索提示不写入短期记忆；最终搜索增强回复只在发送成功后作为 assistant 回复进入短期记忆。
 
 ## 可观测性
 

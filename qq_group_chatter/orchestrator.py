@@ -4,7 +4,7 @@ from time import time
 from collections.abc import Awaitable, Callable
 from typing import Any, Protocol
 
-from qq_group_chatter.agent.chat_agent import parse_web_search_request
+from qq_group_chatter.agent.chat_agent import ChatDecision, ChatReplyDecision, WebSearchDecision
 from qq_group_chatter.models import (
     ChatMessage,
     ConversationContext,
@@ -40,7 +40,7 @@ class ReplyAgent(Protocol):
         context: ConversationContext,
         short_term_messages: list[ChatMessage],
         long_term_memory,
-    ) -> str: ...
+    ) -> ChatDecision: ...
 
     async def generate_grounded_search_reply(
         self,
@@ -55,8 +55,6 @@ class ReplyAgent(Protocol):
 
 
 class WebSearch(Protocol):
-    async def search_reply(self, query: str) -> str: ...
-
     async def search_sources(self, query: str) -> list[Any]: ...
 
 
@@ -120,14 +118,14 @@ class ChatOrchestrator:
                         existing_memories=long_term_memory,
                     )
                 )
-                reply = await self._chat_agent.generate_reply(
+                decision = await self._chat_agent.generate_reply(
                     user_message=content,
                     context=context,
                     short_term_messages=short_term_messages,
                     long_term_memory=long_term_memory,
                 )
-                reply = await self._resolve_web_search_reply(
-                    reply,
+                reply = await self._resolve_decision(
+                    decision,
                     user_message=content,
                     context=context,
                     short_term_messages=short_term_messages,
@@ -147,9 +145,9 @@ class ChatOrchestrator:
                 record_error("chat_orchestrator", exc)
                 raise
 
-    async def _resolve_web_search_reply(
+    async def _resolve_decision(
         self,
-        reply: str,
+        decision: ChatDecision,
         *,
         user_message: str,
         context: ConversationContext,
@@ -157,26 +155,27 @@ class ChatOrchestrator:
         long_term_memory,
         on_search_start: Callable[[str], Awaitable[None] | None] | None,
     ) -> str:
-        request = parse_web_search_request(reply)
-        if request is None:
-            return reply
+        if isinstance(decision, ChatReplyDecision):
+            return decision.content
+        if not isinstance(decision, WebSearchDecision):
+            return "我刚刚没能整理好回复，稍后再试。"
         if self._web_search is None:
             return "我现在没法联网搜索，稍后再试。"
 
         if on_search_start is not None:
             try:
-                result = on_search_start(request.notice)
+                result = on_search_start(decision.notice)
                 if _is_awaitable(result):
                     await result
             except Exception as exc:
                 record_error("web_search_notice", exc)
         try:
-            sources = await self._web_search.search_sources(request.query)
+            sources = await self._web_search.search_sources(decision.query)
             if not sources:
                 return "我搜了一下，但没找到足够可靠的网页正文来确认。"
             return await self._chat_agent.generate_grounded_search_reply(
                 user_message=user_message,
-                search_query=request.query,
+                search_query=decision.query,
                 search_sources=sources,
                 context=context,
                 short_term_messages=short_term_messages,

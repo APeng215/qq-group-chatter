@@ -1,12 +1,9 @@
 from __future__ import annotations
 
 from time import time
-from typing import Any
-
 from qq_group_chatter.models import PendingAssistantReply
 from qq_group_chatter.observability import record_error
 from qq_group_chatter.orchestrator import ChatOrchestrator
-from qq_group_chatter.services.web_search import parse_search_command
 
 
 try:
@@ -22,17 +19,11 @@ except Exception:  # pragma: no cover - lets service tests run without adapter s
 
 
 orchestrator: ChatOrchestrator | None = None
-search_service: Any | None = None
 
 
 def setup_orchestrator(instance: ChatOrchestrator) -> None:
     global orchestrator
     orchestrator = instance
-
-
-def setup_search_service(instance: Any | None) -> None:
-    global search_service
-    search_service = instance
 
 
 if on_message is not None:
@@ -47,15 +38,6 @@ if on_message is not None:
             return
         context = _context_from_event(event)
         if context is None:
-            return
-        if await _send_search_reply(
-            bot,
-            event,
-            context,
-            text,
-            search_service=search_service,
-            orchestrator=orchestrator,
-        ):
             return
         await _handle_regular_chat(bot, event, context, text, orchestrator)
 
@@ -140,42 +122,3 @@ async def _handle_regular_chat(
     )
     if reply:
         await _send_reply_and_record(bot, event, reply, orchestrator)
-
-
-async def _send_search_reply(
-    bot,
-    event,
-    context,
-    text: str,
-    *,
-    search_service: Any | None,
-    orchestrator: ChatOrchestrator,
-) -> bool:
-    query = parse_search_command(text)
-    if query is None:
-        return False
-    if search_service is None:
-        reply_content = "搜索功能没有配置。请检查 WEB_SEARCH_ENABLED 和 TAVILY_API_KEY。"
-    else:
-        try:
-            await bot.send(event, "我先搜一下，稍等。")
-        except Exception as exc:
-            record_error("web_search_notice_send", exc)
-        try:
-            reply_content = await search_service.search_reply(query)
-        except Exception as exc:
-            record_error("web_search", exc)
-            reply_content = "搜索失败，稍后再试。"
-
-    reply = PendingAssistantReply(
-        context=context,
-        content=reply_content,
-        timestamp=time(),
-    )
-    try:
-        await bot.send(event, reply.content)
-    except Exception as exc:
-        record_error("web_search_send", exc)
-        return True
-    await orchestrator.record_assistant_reply(reply)
-    return True

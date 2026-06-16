@@ -53,6 +53,28 @@ async def test_deepseek_llm_calls_v4_pro_with_thinking_disabled():
     assert client.calls[0]["messages"][1] == {"role": "user", "content": "hello"}
 
 
+async def test_deepseek_llm_can_pass_response_format():
+    client = FakeAsyncClient()
+    llm = DeepSeekChatLLM(
+        api_key="secret",
+        client=client,
+        response_format={"type": "json_object"},
+    )
+
+    await llm.ainvoke("return json")
+
+    assert client.calls[0]["response_format"] == {"type": "json_object"}
+
+
+async def test_deepseek_llm_can_override_response_format_per_call():
+    client = FakeAsyncClient()
+    llm = DeepSeekChatLLM(api_key="secret", client=client)
+
+    await llm.ainvoke("return json", response_format={"type": "json_object"})
+
+    assert client.calls[0]["response_format"] == {"type": "json_object"}
+
+
 def test_factory_uses_env_key_and_default_model(monkeypatch):
     monkeypatch.setenv("DEEPSEEK_API_KEY", "secret")
 

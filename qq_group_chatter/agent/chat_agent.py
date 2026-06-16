@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
+from typing import Literal
 from typing import Any
 
 from qq_group_chatter.models import (
@@ -19,36 +21,66 @@ from qq_group_chatter.prompt_loader import load_prompt
 
 CHAT_AGENT_PROMPT_TEMPLATE = load_prompt("chat_agent.txt")
 CHAT_SEARCH_GROUNDED_PROMPT_TEMPLATE = load_prompt("chat_search_grounded.txt")
-WEB_SEARCH_REQUEST_MARKER = "__NEED_WEB_SEARCH__"
 
 
 @dataclass(frozen=True)
-class WebSearchRequest:
+class ChatReplyDecision:
+    content: str
+
+
+@dataclass(frozen=True)
+class WebSearchDecision:
     notice: str
     query: str
 
 
-def parse_web_search_request(reply: str) -> WebSearchRequest | None:
-    lines = reply.strip().splitlines()
-    if len(lines) != 3:
-        return None
-    if lines[0].strip() != WEB_SEARCH_REQUEST_MARKER:
-        return None
+ChatDecision = ChatReplyDecision | WebSearchDecision
 
-    notice_prefix = "提示:"
-    query_prefix = "查询:"
-    notice_line = lines[1].strip()
-    query_line = lines[2].strip()
-    if not notice_line.startswith(notice_prefix):
-        return None
-    if not query_line.startswith(query_prefix):
-        return None
 
-    notice = notice_line[len(notice_prefix) :].strip()
-    query = query_line[len(query_prefix) :].strip()
-    if not notice or not query:
+def parse_chat_decision(raw: str) -> ChatDecision | None:
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError:
         return None
-    return WebSearchRequest(notice=notice, query=query)
+    if not isinstance(data, dict):
+        return None
+    action = data.get("action")
+    if action == "reply":
+        if set(data) != {"action", "content"}:
+            return None
+        content = _clean_field(data.get("content"))
+        if not content:
+            return None
+        return ChatReplyDecision(content=content)
+    if action == "web_search":
+        if set(data) != {"action", "notice", "query"}:
+            return None
+        notice = _clean_field(data.get("notice"))
+        query = _clean_field(data.get("query"))
+        if not notice or not query:
+            return None
+        if _looks_like_template_leak(notice) or _looks_like_template_leak(query):
+            return None
+        return WebSearchDecision(notice=notice, query=query)
+    return None
+
+
+def _clean_field(value: Any) -> str | None:
+    if not isinstance(value, str):
+        return None
+    return value.strip()
+
+
+def _looks_like_template_leak(value: str) -> bool:
+    if "<" in value or ">" in value:
+        return True
+    return any(
+        marker in value
+        for marker in (
+            "神奈要先发给对方的等待提示",
+            "适合搜索的查询词",
+        )
+    )
 
 
 class ChatAgent:
@@ -62,7 +94,7 @@ class ChatAgent:
         context: ConversationContext,
         short_term_messages: list[ChatMessage],
         long_term_memory: LongTermMemoryBundle,
-    ) -> str:
+    ) -> ChatDecision:
         prompt = self._build_prompt(
             user_message=user_message,
             context=context,
@@ -70,7 +102,7 @@ class ChatAgent:
             long_term_memory=long_term_memory,
         )
         if self._llm is None:
-            return "\u6211\u73b0\u5728\u8fd8\u6ca1\u6709\u914d\u7f6e\u804a\u5929\u6a21\u578b\u3002"
+            return ChatReplyDecision(content="\u6211\u73b0\u5728\u8fd8\u6ca1\u6709\u914d\u7f6e\u804a\u5929\u6a21\u578b\u3002")
         with observe_duration(
             metric=LLM_LATENCY_SECONDS,
             labels={"component": "chat_agent"},
@@ -80,8 +112,14 @@ class ChatAgent:
                 **conversation_log_fields(context),
             },
         ):
-            raw = await self._call_llm(prompt)
-        return self._content(raw)
+            raw = await self._call_llm(
+                prompt,
+                response_format={"type": "json_object"},
+            )
+        decision = parse_chat_decision(self._content(raw))
+        if decision is None:
+            return ChatReplyDecision(content="我刚刚没能整理好回复，稍后再试。")
+        return decision
 
     async def generate_grounded_search_reply(
         self,
@@ -115,13 +153,34 @@ class ChatAgent:
             raw = await self._call_llm(prompt)
         return self._content(raw)
 
-    async def _call_llm(self, prompt: str) -> Any:
+    async def _call_llm(
+        self,
+        prompt: str,
+        *,
+        response_format: dict[str, Any] | None = None,
+    ) -> Any:
         if hasattr(self._llm, "ainvoke"):
+            if response_format is not None:
+                try:
+                    return await self._llm.ainvoke(prompt, response_format=response_format)
+                except TypeError:
+                    pass
             return await self._llm.ainvoke(prompt)
         if hasattr(self._llm, "invoke"):
+            if response_format is not None:
+                try:
+                    return self._llm.invoke(prompt, response_format=response_format)
+                except TypeError:
+                    pass
             return self._llm.invoke(prompt)
         if callable(self._llm):
-            result = self._llm(prompt)
+            if response_format is not None:
+                try:
+                    result = self._llm(prompt, response_format=response_format)
+                except TypeError:
+                    result = self._llm(prompt)
+            else:
+                result = self._llm(prompt)
             if hasattr(result, "__await__"):
                 return await result
             return result

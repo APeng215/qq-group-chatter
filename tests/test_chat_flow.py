@@ -1,4 +1,4 @@
-from qq_group_chatter.agent.chat_agent import ChatAgent
+from qq_group_chatter.agent.chat_agent import ChatAgent, ChatReplyDecision, WebSearchDecision
 from qq_group_chatter.models import (
     ChatMessage,
     LongTermMemoryBundle,
@@ -64,12 +64,12 @@ class FakeResponder:
                 "long_term_memory": long_term_memory,
             }
         )
-        return "好的"
+        return ChatReplyDecision(content="好的")
 
 
 class FixedResponder:
-    def __init__(self, reply):
-        self.reply = reply
+    def __init__(self, decision):
+        self.decision = decision
         self.calls = []
         self.grounded_calls = []
 
@@ -81,7 +81,7 @@ class FixedResponder:
                 "long_term_memory": long_term_memory,
             }
         )
-        return self.reply
+        return self.decision
 
     async def generate_grounded_search_reply(
         self,
@@ -107,15 +107,9 @@ class FixedResponder:
 
 
 class FakeWebSearch:
-    def __init__(self, reply="搜索答案", sources=None):
-        self.reply = reply
+    def __init__(self, sources=None):
         self.sources = sources
-        self.search_reply_queries = []
         self.search_sources_queries = []
-
-    async def search_reply(self, query):
-        self.search_reply_queries.append(query)
-        return self.reply
 
     async def search_sources(self, query):
         self.search_sources_queries.append(query)
@@ -215,9 +209,10 @@ async def test_orchestrator_runs_web_search_fallback_after_llm_notice():
     short_term = ShortTermMemoryService(max_messages_per_conversation=10)
     long_term = FakeLongTermMemory()
     responder = FixedResponder(
-        "__NEED_WEB_SEARCH__\n"
-        "提示: 我查一下再回你。\n"
-        "查询: DeepSeek 最新消息"
+        WebSearchDecision(
+            notice="我查一下再回你。",
+            query="DeepSeek 最新消息",
+        )
     )
     web_search = FakeWebSearch()
     notices = []
@@ -244,7 +239,6 @@ async def test_orchestrator_runs_web_search_fallback_after_llm_notice():
     assert pending_reply.content == "神奈基于搜索资料的回复"
     assert notices == ["我查一下再回你。"]
     assert web_search.search_sources_queries == ["DeepSeek 最新消息"]
-    assert web_search.search_reply_queries == []
     assert responder.grounded_calls[0]["user_message"] == "DeepSeek 今天有什么新闻？"
     assert responder.grounded_calls[0]["search_query"] == "DeepSeek 最新消息"
     assert responder.grounded_calls[0]["search_sources"][0].raw_content == "原网页正文"
@@ -259,7 +253,7 @@ async def test_orchestrator_does_not_search_for_regular_reply():
     orchestrator = ChatOrchestrator(
         short_term_memory=ShortTermMemoryService(),
         long_term_memory=FakeLongTermMemory(),
-        chat_agent=FixedResponder("普通回复"),
+        chat_agent=FixedResponder(ChatReplyDecision(content="普通回复")),
         web_search=web_search,
     )
     context = build_group_conversation_context(
@@ -279,7 +273,6 @@ async def test_orchestrator_does_not_search_for_regular_reply():
 
     assert pending_reply.content == "普通回复"
     assert web_search.search_sources_queries == []
-    assert web_search.search_reply_queries == []
     assert notices == []
 
 
@@ -288,9 +281,10 @@ async def test_orchestrator_returns_search_unavailable_when_fallback_has_no_serv
         short_term_memory=ShortTermMemoryService(),
         long_term_memory=FakeLongTermMemory(),
         chat_agent=FixedResponder(
-            "__NEED_WEB_SEARCH__\n"
-            "提示: 我查一下再回你。\n"
-            "查询: DeepSeek 最新消息"
+            WebSearchDecision(
+                notice="我查一下再回你。",
+                query="DeepSeek 最新消息",
+            )
         ),
     )
     context = build_group_conversation_context(
@@ -314,9 +308,10 @@ async def test_orchestrator_returns_search_unavailable_when_fallback_has_no_serv
 
 async def test_orchestrator_returns_no_search_source_message_without_grounded_reply():
     responder = FixedResponder(
-        "__NEED_WEB_SEARCH__\n"
-        "提示: 我查一下再回你。\n"
-        "查询: DeepSeek 最新消息"
+        WebSearchDecision(
+            notice="我查一下再回你。",
+            query="DeepSeek 最新消息",
+        )
     )
     web_search = FakeWebSearch(sources=[])
     orchestrator = ChatOrchestrator(

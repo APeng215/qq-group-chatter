@@ -1,4 +1,9 @@
-from qq_group_chatter.agent.chat_agent import ChatAgent, parse_web_search_request
+from qq_group_chatter.agent.chat_agent import (
+    ChatAgent,
+    ChatReplyDecision,
+    WebSearchDecision,
+    parse_chat_decision,
+)
 from qq_group_chatter.models import (
     ChatMessage,
     LongTermMemoryBundle,
@@ -34,29 +39,38 @@ def test_chat_agent_prompt_includes_bot_identity():
     assert "模型" in prompt
 
 
-def test_parse_web_search_request_accepts_strict_three_line_protocol():
-    request = parse_web_search_request(
-        "__NEED_WEB_SEARCH__\n"
-        "提示: 我查一下再回你。\n"
-        "查询: DeepSeek 最新消息"
+def test_parse_chat_decision_accepts_reply_json():
+    decision = parse_chat_decision('{"action":"reply","content":"普通回复"}')
+
+    assert decision == ChatReplyDecision(content="普通回复")
+
+
+def test_parse_chat_decision_accepts_web_search_json():
+    decision = parse_chat_decision(
+        '{"action":"web_search","notice":"我查一下最新情况，稍等。","query":"DeepSeek 最新消息"}'
     )
 
-    assert request is not None
-    assert request.notice == "我查一下再回你。"
-    assert request.query == "DeepSeek 最新消息"
+    assert decision == WebSearchDecision(
+        notice="我查一下最新情况，稍等。",
+        query="DeepSeek 最新消息",
+    )
 
 
-def test_parse_web_search_request_rejects_invalid_protocols():
+def test_parse_chat_decision_rejects_invalid_json_or_schema():
     invalid_replies = [
         "普通回复",
-        "__NEED_WEB_SEARCH__\n提示: \n查询: DeepSeek",
-        "__NEED_WEB_SEARCH__\n提示: 我查一下\n查询: ",
-        "我需要搜索\n__NEED_WEB_SEARCH__\n提示: 我查一下\n查询: DeepSeek",
-        "__NEED_WEB_SEARCH__\n提示: 我查一下\n查询: DeepSeek\n马上回来",
+        '{"action":"reply","content":""}',
+        '{"action":"reply","content":"普通回复","extra":1}',
+        '{"action":"web_search","notice":"","query":"DeepSeek"}',
+        '{"action":"web_search","notice":"我查一下","query":""}',
+        '{"action":"web_search","notice":"<神奈要先发给对方的等待提示>","query":"DeepSeek"}',
+        '{"action":"web_search","notice":"神奈要先发给对方的等待提示","query":"DeepSeek"}',
+        '{"action":"web_search","notice":"我查一下","query":"适合搜索的查询词"}',
+        '{"action":"unknown","content":"普通回复"}',
     ]
 
     for reply in invalid_replies:
-        assert parse_web_search_request(reply) is None
+        assert parse_chat_decision(reply) is None
 
 
 class RecordingLLM:

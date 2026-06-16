@@ -6,8 +6,6 @@ from qq_group_chatter.models import PendingAssistantReply, build_group_conversat
 from qq_group_chatter.plugins.chat import (
     _handle_regular_chat,
     _send_reply_and_record,
-    _send_search_reply,
-    setup_search_service,
     should_handle_message,
 )
 
@@ -79,15 +77,6 @@ class FakeOrchestrator:
         )
 
 
-class FakeSearchService:
-    def __init__(self):
-        self.queries = []
-
-    async def search_reply(self, query):
-        self.queries.append(query)
-        return f"answer: {query}"
-
-
 def context():
     return build_group_conversation_context(
         group_id=888888,
@@ -135,104 +124,6 @@ async def test_send_reply_logs_error_and_does_not_record_when_send_fails(monkeyp
     assert recorded_errors == [{"stage": "send_reply", "exc": error}]
 
 
-async def test_send_search_reply_uses_search_service_and_records_assistant_reply():
-    bot = FakeBot()
-    service = FakeSearchService()
-    orchestrator = FakeOrchestrator()
-    source_event = event(to_me=True)
-
-    handled = await _send_search_reply(
-        bot,
-        source_event,
-        context(),
-        "搜一下 DeepSeek 最新消息",
-        search_service=service,
-        orchestrator=orchestrator,
-    )
-
-    assert handled is True
-    assert service.queries == ["DeepSeek 最新消息"]
-    assert bot.sent == [
-        {"event": source_event, "message": "我先搜一下，稍等。"},
-        {"event": source_event, "message": "answer: DeepSeek 最新消息"},
-    ]
-    assert orchestrator.recorded[0].content == "answer: DeepSeek 最新消息"
-
-
-async def test_send_search_reply_ignores_regular_chat_and_slash_command():
-    for text in ["普通聊天", "/搜 DeepSeek 最新消息"]:
-        handled = await _send_search_reply(
-            FakeBot(),
-            event(to_me=True),
-            context(),
-            text,
-            search_service=FakeSearchService(),
-            orchestrator=FakeOrchestrator(),
-        )
-
-        assert handled is False
-
-
-async def test_send_search_reply_logs_send_failure_without_raising(monkeypatch):
-    error = RuntimeError("send failed")
-    bot = FakeBot(raises=error)
-    service = FakeSearchService()
-    orchestrator = FakeOrchestrator()
-    recorded_errors = []
-    monkeypatch.setattr(
-        "qq_group_chatter.plugins.chat.record_error",
-        lambda stage, exc: recorded_errors.append({"stage": stage, "exc": exc}),
-    )
-
-    handled = await _send_search_reply(
-        bot,
-        event(to_me=True),
-        context(),
-        "搜索 DeepSeek 最新消息",
-        search_service=service,
-        orchestrator=orchestrator,
-    )
-
-    assert handled is True
-    assert orchestrator.recorded == []
-    assert recorded_errors == [
-        {"stage": "web_search_notice_send", "exc": error},
-        {"stage": "web_search_send", "exc": error},
-    ]
-
-
-async def test_send_search_reply_sends_notice_before_search_failure(monkeypatch):
-    class FailingSearchService:
-        async def search_reply(self, query):
-            raise RuntimeError("search failed")
-
-    bot = FakeBot()
-    orchestrator = FakeOrchestrator()
-    recorded_errors = []
-    source_event = event(to_me=True)
-    monkeypatch.setattr(
-        "qq_group_chatter.plugins.chat.record_error",
-        lambda stage, exc: recorded_errors.append({"stage": stage, "exc": exc}),
-    )
-
-    handled = await _send_search_reply(
-        bot,
-        source_event,
-        context(),
-        "搜索 DeepSeek 最新消息",
-        search_service=FailingSearchService(),
-        orchestrator=orchestrator,
-    )
-
-    assert handled is True
-    assert [item["message"] for item in bot.sent] == [
-        "我先搜一下，稍等。",
-        "搜索失败，稍后再试。",
-    ]
-    assert orchestrator.recorded[0].content == "搜索失败，稍后再试。"
-    assert recorded_errors[0]["stage"] == "web_search"
-
-
 async def test_regular_chat_sends_llm_search_notice_before_final_reply():
     bot = FakeBot()
     orchestrator = FakeOrchestrator()
@@ -253,11 +144,21 @@ async def test_regular_chat_sends_llm_search_notice_before_final_reply():
     assert orchestrator.recorded[0].content == "搜索最终答案"
 
 
-def test_setup_search_service_sets_module_global():
-    service = FakeSearchService()
+async def test_search_phrase_goes_through_regular_chat():
+    bot = FakeBot()
+    orchestrator = FakeOrchestrator()
+    source_event = event(to_me=True)
 
-    setup_search_service(service)
+    await _handle_regular_chat(
+        bot,
+        source_event,
+        context(),
+        "搜一下 DeepSeek 最新消息",
+        orchestrator,
+    )
 
-    import qq_group_chatter.plugins.chat as chat_plugin
-
-    assert chat_plugin.search_service is service
+    assert orchestrator.handle_calls[0]["user_message"] == "搜一下 DeepSeek 最新消息"
+    assert [item["message"] for item in bot.sent] == [
+        "我查一下再回你。",
+        "搜索最终答案",
+    ]

@@ -20,6 +20,7 @@ class DeepSeekChatLLM:
     thinking: ThinkingMode = "disabled"
     temperature: float = 0.7
     max_tokens: int | None = None
+    response_format: dict[str, Any] | None = None
     base_url: str = "https://api.deepseek.com"
     client: Any | None = None
 
@@ -35,7 +36,12 @@ class DeepSeekChatLLM:
             ) from exc
         self.client = AsyncOpenAI(api_key=self.api_key, base_url=self.base_url)
 
-    async def ainvoke(self, prompt: str) -> str:
+    async def ainvoke(
+        self,
+        prompt: str,
+        *,
+        response_format: dict[str, Any] | None = None,
+    ) -> str:
         params = {
             "model": self.model,
             "messages": [
@@ -53,6 +59,11 @@ class DeepSeekChatLLM:
         }
         if self.max_tokens is not None:
             params["max_tokens"] = self.max_tokens
+        resolved_response_format = (
+            response_format if response_format is not None else self.response_format
+        )
+        if resolved_response_format is not None:
+            params["response_format"] = resolved_response_format
         response = await self.client.chat.completions.create(**params)
         return response.choices[0].message.content or ""
 
@@ -63,6 +74,7 @@ def create_deepseek_chat_llm(
     model: str = "deepseek-v4-pro",
     thinking: ThinkingMode = "disabled",
     max_tokens: int | None = None,
+    response_format: dict[str, Any] | None = None,
 ) -> DeepSeekChatLLM | None:
     resolved_key = api_key or os.getenv("DEEPSEEK_API_KEY") or _read_dotenv_key()
     if not resolved_key:
@@ -72,6 +84,7 @@ def create_deepseek_chat_llm(
         model=model,
         thinking=thinking,
         max_tokens=max_tokens,
+        response_format=response_format,
     )
 
 
