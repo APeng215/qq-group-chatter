@@ -1,10 +1,13 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime
-from zoneinfo import ZoneInfo
+from datetime import UTC, datetime, timedelta, timezone
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 
-LOCAL_TIMEZONE = ZoneInfo("Asia/Shanghai")
+try:
+    LOCAL_TIMEZONE = ZoneInfo("Asia/Shanghai")
+except ZoneInfoNotFoundError:
+    LOCAL_TIMEZONE = timezone(timedelta(hours=8))
 TIME_FORMAT = "%Y-%m-%d %H:%M"
 
 
