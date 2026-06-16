@@ -8,6 +8,7 @@ from typing import Any
 
 from qq_group_chatter.agent.chat_agent import ChatAgent
 from qq_group_chatter.agent.deepseek_llm import create_deepseek_chat_llm, _read_dotenv_key
+from qq_group_chatter.llm_tracing import LLMTraceStore
 from qq_group_chatter.orchestrator import ChatOrchestrator
 from qq_group_chatter.services.long_term_memory import LongTermMemoryService
 from qq_group_chatter.services.long_term_memory_planner import LongTermMemoryPlanner
@@ -50,6 +51,7 @@ class ChatBotApplication:
     orchestrator: ChatOrchestrator
     long_term_memory: LongTermMemoryService
     web_search: WebSearchService | None = None
+    llm_trace_store: LLMTraceStore | None = None
 
     async def start(self) -> None:
         await self.long_term_memory.start()
@@ -80,38 +82,11 @@ def create_default_mem0_client() -> Any:
         or _read_dotenv_key("MEM0_FASTEMBED_MODEL")
         or "BAAI/bge-small-zh-v1.5"
     )
-    embedding_dims = _fastembed_model_dims(fastembed_model)
-    collection_name = f"qq_group_chatter_memories_{_collection_suffix(fastembed_model)}_{embedding_dims}d"
-
-    embedder_config: dict[str, Any] = {
-        "provider": "fastembed",
-        "config": {
-            "model": fastembed_model,
-        },
-    }
-
-    config = {
-        "llm": {
-            "provider": "deepseek",
-            "config": {
-                "api_key": deepseek_key,
-                "model": "deepseek-v4-pro",
-                "temperature": 0.0,
-                "max_tokens": 1000,
-                "deepseek_base_url": "https://api.deepseek.com",
-            },
-        },
-        "embedder": embedder_config,
-        "vector_store": {
-            "provider": "qdrant",
-            "config": {
-                "collection_name": collection_name,
-                "embedding_model_dims": embedding_dims,
-                "path": ".mem0/qdrant",
-            },
-        },
-        "history_db_path": str(mem0_dir / "history.db"),
-    }
+    config = _build_mem0_config(
+        deepseek_key=deepseek_key,
+        fastembed_model=fastembed_model,
+        mem0_dir=mem0_dir,
+    )
     try:
         return Memory.from_config(config)
     except Exception as exc:
@@ -124,6 +99,44 @@ def create_default_mem0_client() -> Any:
 def _collection_suffix(model_name: str) -> str:
     suffix = re.sub(r"[^a-zA-Z0-9]+", "_", model_name).strip("_").lower()
     return suffix or "default"
+
+
+def _build_mem0_config(
+    *,
+    deepseek_key: str,
+    fastembed_model: str,
+    mem0_dir: str | Path,
+) -> dict[str, Any]:
+    resolved_mem0_dir = Path(mem0_dir).resolve()
+    embedding_dims = _fastembed_model_dims(fastembed_model)
+    collection_name = f"qq_group_chatter_memories_{_collection_suffix(fastembed_model)}_{embedding_dims}d"
+    return {
+        "llm": {
+            "provider": "deepseek",
+            "config": {
+                "api_key": deepseek_key,
+                "model": "deepseek-v4-pro",
+                "temperature": 0.0,
+                "max_tokens": 1000,
+                "deepseek_base_url": "https://api.deepseek.com",
+            },
+        },
+        "embedder": {
+            "provider": "fastembed",
+            "config": {
+                "model": fastembed_model,
+            },
+        },
+        "vector_store": {
+            "provider": "qdrant",
+            "config": {
+                "collection_name": collection_name,
+                "embedding_model_dims": embedding_dims,
+                "path": str(resolved_mem0_dir / "qdrant"),
+            },
+        },
+        "history_db_path": str(resolved_mem0_dir / "history.db"),
+    }
 
 
 def _fastembed_model_dims(model_name: str) -> int:
@@ -143,11 +156,15 @@ def create_default_long_term_memory_service(
     *,
     mem0_client: Any | None = None,
     planner_llm: Any | None = None,
+    llm_trace_store: LLMTraceStore | None = None,
 ) -> LongTermMemoryService:
     resolved_planner_llm = (
         planner_llm
         if planner_llm is not None
-        else create_deepseek_chat_llm(model="deepseek-v4-pro")
+        else create_deepseek_chat_llm(
+            model="deepseek-v4-pro",
+            trace_store=llm_trace_store,
+        )
     )
     return LongTermMemoryService(
         mem0_client=mem0_client or create_default_mem0_client(),
@@ -166,12 +183,18 @@ def create_default_orchestrator(
     Production entrypoints should use create_default_application() so the
     long-term memory worker is started and stopped with the bot lifecycle.
     """
-    resolved_chat_llm = chat_llm if chat_llm is not None else create_deepseek_chat_llm()
+    llm_trace_store = create_default_llm_trace_store()
+    resolved_chat_llm = (
+        chat_llm
+        if chat_llm is not None
+        else create_deepseek_chat_llm(trace_store=llm_trace_store)
+    )
     return ChatOrchestrator(
         short_term_memory=ShortTermMemoryService(),
         long_term_memory=create_default_long_term_memory_service(
             mem0_client=mem0_client,
             planner_llm=planner_llm,
+            llm_trace_store=llm_trace_store,
         ),
         chat_agent=ChatAgent(llm=resolved_chat_llm),
     )
@@ -183,11 +206,17 @@ def create_default_application(
     planner_llm: Any | None = None,
     mem0_client: Any | None = None,
 ) -> ChatBotApplication:
-    resolved_chat_llm = chat_llm if chat_llm is not None else create_deepseek_chat_llm()
+    llm_trace_store = create_default_llm_trace_store()
+    resolved_chat_llm = (
+        chat_llm
+        if chat_llm is not None
+        else create_deepseek_chat_llm(trace_store=llm_trace_store)
+    )
     web_search = create_default_web_search_service()
     long_term_memory = create_default_long_term_memory_service(
         mem0_client=mem0_client,
         planner_llm=planner_llm,
+        llm_trace_store=llm_trace_store,
     )
     orchestrator = ChatOrchestrator(
         short_term_memory=ShortTermMemoryService(),
@@ -199,4 +228,34 @@ def create_default_application(
         orchestrator=orchestrator,
         long_term_memory=long_term_memory,
         web_search=web_search,
+        llm_trace_store=llm_trace_store,
     )
+
+
+def create_default_llm_trace_store() -> LLMTraceStore:
+    if not _read_bool("QQ_GROUP_CHATTER_LLM_TRACE_ENABLED", True):
+        return LLMTraceStore.disabled()
+    path = os.getenv("QQ_GROUP_CHATTER_LLM_TRACE_PATH") or _read_dotenv_key(
+        "QQ_GROUP_CHATTER_LLM_TRACE_PATH"
+    )
+    return LLMTraceStore.enabled_store(
+        path=path or "logs/llm-traces.jsonl",
+        max_records=_read_int("QQ_GROUP_CHATTER_LLM_TRACE_MAX_RECORDS", 500),
+    )
+
+
+def _read_bool(env_name: str, default: bool) -> bool:
+    raw = os.getenv(env_name) or _read_dotenv_key(env_name)
+    if raw is None:
+        return default
+    return raw.strip().lower() not in {"0", "false", "no", "off"}
+
+
+def _read_int(env_name: str, default: int) -> int:
+    raw = os.getenv(env_name) or _read_dotenv_key(env_name)
+    if raw is None:
+        return default
+    try:
+        return int(raw.strip())
+    except ValueError:
+        return default

@@ -49,6 +49,12 @@ class FakeLongTermMemory:
         )
 
 
+class FailingLongTermMemory(FakeLongTermMemory):
+    async def search(self, user_message, context):
+        self.search_calls.append({"user_message": user_message, "context": context})
+        raise RuntimeError("mem0 unavailable")
+
+
 class FakeResponder:
     def __init__(self, events=None):
         self.events = events
@@ -203,6 +209,32 @@ async def test_orchestrator_ignores_empty_messages():
     )
 
     assert await orchestrator.handle_message(context=context, user_message="   ") is None
+
+
+async def test_orchestrator_continues_reply_but_skips_ingestion_when_memory_search_fails():
+    long_term = FailingLongTermMemory()
+    responder = FakeResponder()
+    orchestrator = ChatOrchestrator(
+        short_term_memory=ShortTermMemoryService(),
+        long_term_memory=long_term,
+        chat_agent=responder,
+    )
+    context = build_group_conversation_context(
+        group_id=888888,
+        user_id=123456,
+        message_id="m1",
+        nickname="阿咳",
+        timestamp=123.0,
+    )
+
+    pending_reply = await orchestrator.handle_message(context=context, user_message="你好")
+
+    assert pending_reply.content == "好的"
+    assert long_term.enqueued == []
+    assert responder.calls[0]["long_term_memory"] == LongTermMemoryBundle(
+        user_memories=[],
+        conversation_memories=[],
+    )
 
 
 async def test_orchestrator_runs_web_search_fallback_after_llm_notice():

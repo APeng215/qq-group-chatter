@@ -116,6 +116,10 @@ class ChatAgent:
             raw = await self._call_llm(
                 prompt,
                 response_format={"type": "json_object"},
+                trace_context={
+                    "component": "chat_agent",
+                    "operation": "decision",
+                },
             )
         decision = parse_chat_decision(self._content(raw))
         if decision is None:
@@ -151,7 +155,13 @@ class ChatAgent:
                 **conversation_log_fields(context),
             },
         ):
-            raw = await self._call_llm(prompt)
+            raw = await self._call_llm(
+                prompt,
+                trace_context={
+                    "component": "chat_agent",
+                    "operation": "grounded_search_reply",
+                },
+            )
         return self._content(raw)
 
     async def _call_llm(
@@ -159,29 +169,51 @@ class ChatAgent:
         prompt: str,
         *,
         response_format: dict[str, Any] | None = None,
+        trace_context: dict[str, str] | None = None,
     ) -> Any:
         if hasattr(self._llm, "ainvoke"):
             if response_format is not None:
                 try:
-                    return await self._llm.ainvoke(prompt, response_format=response_format)
+                    return await self._llm.ainvoke(
+                        prompt,
+                        response_format=response_format,
+                        trace_context=trace_context,
+                    )
                 except TypeError:
                     pass
-            return await self._llm.ainvoke(prompt)
+            try:
+                return await self._llm.ainvoke(prompt, trace_context=trace_context)
+            except TypeError:
+                return await self._llm.ainvoke(prompt)
         if hasattr(self._llm, "invoke"):
             if response_format is not None:
                 try:
-                    return self._llm.invoke(prompt, response_format=response_format)
+                    return self._llm.invoke(
+                        prompt,
+                        response_format=response_format,
+                        trace_context=trace_context,
+                    )
                 except TypeError:
                     pass
-            return self._llm.invoke(prompt)
+            try:
+                return self._llm.invoke(prompt, trace_context=trace_context)
+            except TypeError:
+                return self._llm.invoke(prompt)
         if callable(self._llm):
             if response_format is not None:
                 try:
-                    result = self._llm(prompt, response_format=response_format)
+                    result = self._llm(
+                        prompt,
+                        response_format=response_format,
+                        trace_context=trace_context,
+                    )
                 except TypeError:
                     result = self._llm(prompt)
             else:
-                result = self._llm(prompt)
+                try:
+                    result = self._llm(prompt, trace_context=trace_context)
+                except TypeError:
+                    result = self._llm(prompt)
             if hasattr(result, "__await__"):
                 return await result
             return result

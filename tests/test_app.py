@@ -4,6 +4,7 @@ import sys
 from qq_group_chatter.app import (
     ChatBotApplication,
     NoopMem0Client,
+    _build_mem0_config,
     create_default_application,
     create_default_orchestrator,
 )
@@ -62,6 +63,22 @@ def test_default_application_wires_web_search_when_tavily_key_exists(monkeypatch
     assert application.orchestrator._web_search is application.web_search
 
 
+def test_default_application_wires_shared_llm_trace_store(monkeypatch):
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "secret")
+    monkeypatch.setenv("QQ_GROUP_CHATTER_LLM_TRACE_PATH", "tests/.tmp/app-llm-traces.jsonl")
+    monkeypatch.setenv("QQ_GROUP_CHATTER_LLM_TRACE_MAX_RECORDS", "7")
+    monkeypatch.setattr("qq_group_chatter.app.create_default_mem0_client", lambda: NoopMem0Client())
+
+    application = create_default_application()
+
+    chat_llm = application.orchestrator._chat_agent._llm
+    planner_llm = application.long_term_memory._planner._llm
+    assert application.llm_trace_store is not None
+    assert chat_llm.trace_store is application.llm_trace_store
+    assert planner_llm.trace_store is application.llm_trace_store
+    assert application.llm_trace_store.max_records == 7
+
+
 def test_default_orchestrator_does_not_create_web_search(monkeypatch):
     monkeypatch.setenv("DEEPSEEK_API_KEY", "secret")
     monkeypatch.setattr(
@@ -103,3 +120,14 @@ async def test_chat_bot_application_starts_and_stops_long_term_memory():
 
     assert orchestrator.long_term_memory.started == 1
     assert orchestrator.long_term_memory.stopped == 1
+
+
+def test_mem0_config_uses_mem0_dir_for_qdrant_path(tmp_path):
+    config = _build_mem0_config(
+        deepseek_key="secret",
+        fastembed_model="BAAI/bge-small-zh-v1.5",
+        mem0_dir=tmp_path / "isolated-mem0",
+    )
+
+    assert config["history_db_path"] == str(tmp_path / "isolated-mem0" / "history.db")
+    assert config["vector_store"]["config"]["path"] == str(tmp_path / "isolated-mem0" / "qdrant")

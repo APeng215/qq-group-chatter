@@ -2,13 +2,19 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 from datetime import UTC, datetime
 from typing import Any
 
 from yarl import URL
 
+from qq_group_chatter.agent.deepseek_llm import _read_dotenv_key
+
 
 def setup_memory_dashboard(driver: Any, application: Any) -> None:
+    if not _read_bool("QQ_GROUP_CHATTER_MEMORY_DASHBOARD_ENABLED", True):
+        return
+
     from nonebot.drivers import HTTPServerSetup
 
     driver.setup_http_server(
@@ -27,6 +33,29 @@ def setup_memory_dashboard(driver: Any, application: Any) -> None:
             handle_func=lambda request: memory_dashboard_api(application),
         )
     )
+    driver.setup_http_server(
+        HTTPServerSetup(
+            path=URL("/api/llm-traces"),
+            method="GET",
+            name="qq_group_chatter_llm_traces_api",
+            handle_func=lambda request: llm_traces_api(application),
+        )
+    )
+    driver.setup_http_server(
+        HTTPServerSetup(
+            path=URL("/api/llm-traces/clear"),
+            method="POST",
+            name="qq_group_chatter_llm_traces_clear_api",
+            handle_func=lambda request: clear_llm_traces_api(application),
+        )
+    )
+
+
+def _read_bool(env_name: str, default: bool) -> bool:
+    raw = os.getenv(env_name) or _read_dotenv_key(env_name)
+    if raw is None:
+        return default
+    return raw.strip().lower() not in {"0", "false", "no", "off"}
 
 
 async def memory_dashboard_response(application: Any) -> Any:
@@ -51,6 +80,62 @@ async def memory_dashboard_api(application: Any) -> dict[str, Any]:
     )
 
 
+async def llm_traces_api(application: Any) -> Any:
+    from nonebot.drivers import Response
+
+    snapshot = await asyncio.to_thread(build_llm_traces_snapshot, application)
+    return Response(
+        200,
+        headers={"content-type": "application/json; charset=utf-8"},
+        content=json.dumps(snapshot, ensure_ascii=False),
+    )
+
+
+async def clear_llm_traces_api(application: Any) -> Any:
+    from nonebot.drivers import Response
+
+    trace_store = getattr(application, "llm_trace_store", None)
+    if trace_store is not None:
+        await asyncio.to_thread(trace_store.clear)
+    return Response(
+        200,
+        headers={"content-type": "application/json; charset=utf-8"},
+        content=json.dumps({"ok": True}, ensure_ascii=False),
+    )
+
+
+def build_llm_traces_snapshot(application: Any) -> dict[str, Any]:
+    trace_store = getattr(application, "llm_trace_store", None)
+    if trace_store is None:
+        return {
+            "generated_at": datetime.now(tz=UTC).isoformat().replace("+00:00", "Z"),
+            "summary": {
+                "total": 0,
+                "running": 0,
+                "success": 0,
+                "error": 0,
+                "average_duration_ms": 0,
+            },
+            "traces": [],
+            "errors": ["LLM trace store is not available."],
+        }
+    try:
+        return trace_store.snapshot()
+    except Exception as exc:
+        return {
+            "generated_at": datetime.now(tz=UTC).isoformat().replace("+00:00", "Z"),
+            "summary": {
+                "total": 0,
+                "running": 0,
+                "success": 0,
+                "error": 0,
+                "average_duration_ms": 0,
+            },
+            "traces": [],
+            "errors": [f"Failed to read LLM traces: {type(exc).__name__}: {exc}"],
+        }
+
+
 def build_memory_dashboard_snapshot(application: Any) -> dict[str, Any]:
     mem0 = getattr(getattr(application, "long_term_memory", None), "_mem0", None)
     errors: list[str] = []
@@ -68,6 +153,7 @@ def build_memory_dashboard_snapshot(application: Any) -> dict[str, Any]:
         "user": sum(1 for item in memories if item["scope"] == "user"),
         "conversation": sum(1 for item in memories if item["scope"] == "conversation"),
         "other": sum(1 for item in memories if item["scope"] == "other"),
+        "queue_size": _memory_queue_size(getattr(application, "long_term_memory", None)),
     }
     return {
         "generated_at": datetime.now(tz=UTC).isoformat().replace("+00:00", "Z"),
@@ -75,6 +161,16 @@ def build_memory_dashboard_snapshot(application: Any) -> dict[str, Any]:
         "memories": memories,
         "errors": errors,
     }
+
+
+def _memory_queue_size(long_term_memory: Any) -> int:
+    queue = getattr(long_term_memory, "_queue", None)
+    if queue is None or not hasattr(queue, "qsize"):
+        return 0
+    try:
+        return int(queue.qsize())
+    except Exception:
+        return 0
 
 
 def memory_dashboard_html(snapshot: dict[str, Any]) -> str:
@@ -118,7 +214,25 @@ def memory_dashboard_html(snapshot: dict[str, Any]) -> str:
     }}
     h1 {{ margin: 0 0 8px; font-size: 22px; }}
     main {{ padding: 20px 24px 32px; max-width: 1280px; margin: 0 auto; }}
-    .toolbar, .summary, .memory, .history-item {{
+    .tabs {{
+      display: flex;
+      gap: 8px;
+      padding: 12px 24px 0;
+      max-width: 1280px;
+      margin: 0 auto;
+    }}
+    .tab {{
+      background: #fff;
+      color: var(--text);
+      border: 1px solid var(--border);
+    }}
+    .tab.active {{
+      background: var(--accent);
+      border-color: var(--accent);
+      color: #fff;
+    }}
+    .panel[hidden] {{ display: none; }}
+    .toolbar, .summary, .memory, .history-item, .trace {{
       background: var(--surface);
       border: 1px solid var(--border);
       border-radius: 8px;
@@ -149,7 +263,7 @@ def memory_dashboard_html(snapshot: dict[str, Any]) -> str:
     }}
     .summary {{
       display: grid;
-      grid-template-columns: repeat(4, minmax(0, 1fr));
+      grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
       gap: 1px;
       overflow: hidden;
       margin-bottom: 16px;
@@ -230,6 +344,20 @@ def memory_dashboard_html(snapshot: dict[str, Any]) -> str:
       margin-top: 8px;
       background: #fcfcfd;
     }}
+    .trace {{
+      padding: 14px 16px;
+      margin-bottom: 12px;
+    }}
+    .trace pre {{
+      max-height: 360px;
+    }}
+    .trace-tools {{
+      grid-template-columns: minmax(220px, 1fr) 160px 160px auto auto;
+    }}
+    .danger-button {{
+      background: var(--danger);
+      border-color: var(--danger);
+    }}
     .empty {{
       text-align: center;
       padding: 48px 16px;
@@ -245,30 +373,60 @@ def memory_dashboard_html(snapshot: dict[str, Any]) -> str:
 <body>
   <header>
     <h1>长期记忆</h1>
-    <div class="muted">只读视图，数据来自当前 Mem0 本地存储。</div>
+    <div class="muted">只读视图，数据来自当前 Mem0 本地存储；LLM 控制台来自本地 trace 文件。</div>
   </header>
+  <nav class="tabs" aria-label="dashboard sections">
+    <button id="memory-tab" class="tab active" type="button">长期记忆</button>
+    <button id="llm-tab" class="tab" type="button">LLM 控制台</button>
+  </nav>
   <main>
-    <section class="toolbar">
-      <input id="search" type="search" placeholder="搜索内容、ID、metadata">
-      <select id="scope">
-        <option value="">全部 scope</option>
-        <option value="user">用户记忆</option>
-        <option value="conversation">会话记忆</option>
-        <option value="other">其他</option>
-      </select>
-      <select id="kind">
-        <option value="">全部 kind</option>
-      </select>
-      <button id="refresh" type="button">刷新</button>
+    <section id="memory-panel" class="panel">
+      <section class="toolbar">
+        <input id="search" type="search" placeholder="搜索内容、ID、metadata">
+        <select id="scope">
+          <option value="">全部 scope</option>
+          <option value="user">用户记忆</option>
+          <option value="conversation">会话记忆</option>
+          <option value="other">其他</option>
+        </select>
+        <select id="kind">
+          <option value="">全部 kind</option>
+        </select>
+        <button id="refresh" type="button">刷新</button>
+      </section>
+      <section id="summary" class="summary"></section>
+      <section id="errors"></section>
+      <section id="list"></section>
     </section>
-    <section id="summary" class="summary"></section>
-    <section id="errors"></section>
-    <section id="list"></section>
+    <section id="llm-panel" class="panel" hidden>
+      <section class="toolbar trace-tools">
+        <input id="trace-search" type="search" placeholder="搜索 prompt / response / error">
+        <select id="trace-component">
+          <option value="">全部 component</option>
+        </select>
+        <select id="trace-status">
+          <option value="">全部 status</option>
+          <option value="running">running</option>
+          <option value="success">success</option>
+          <option value="error">error</option>
+        </select>
+        <button id="trace-refresh" type="button">刷新</button>
+        <button id="trace-clear" class="danger-button" type="button">清空</button>
+      </section>
+      <section id="trace-summary" class="summary"></section>
+      <section id="trace-errors"></section>
+      <section id="trace-list"></section>
+    </section>
   </main>
   <script>
     window.__MEMORY_SNAPSHOT__ = {escaped_snapshot_json};
     let snapshot = window.__MEMORY_SNAPSHOT__;
+    let traceSnapshot = {{ summary: {{}}, traces: [], errors: [] }};
 
+    const memoryTabEl = document.querySelector("#memory-tab");
+    const llmTabEl = document.querySelector("#llm-tab");
+    const memoryPanelEl = document.querySelector("#memory-panel");
+    const llmPanelEl = document.querySelector("#llm-panel");
     const summaryEl = document.querySelector("#summary");
     const errorsEl = document.querySelector("#errors");
     const listEl = document.querySelector("#list");
@@ -276,6 +434,14 @@ def memory_dashboard_html(snapshot: dict[str, Any]) -> str:
     const scopeEl = document.querySelector("#scope");
     const kindEl = document.querySelector("#kind");
     const refreshEl = document.querySelector("#refresh");
+    const traceSummaryEl = document.querySelector("#trace-summary");
+    const traceErrorsEl = document.querySelector("#trace-errors");
+    const traceListEl = document.querySelector("#trace-list");
+    const traceSearchEl = document.querySelector("#trace-search");
+    const traceComponentEl = document.querySelector("#trace-component");
+    const traceStatusEl = document.querySelector("#trace-status");
+    const traceRefreshEl = document.querySelector("#trace-refresh");
+    const traceClearEl = document.querySelector("#trace-clear");
 
     function escapeHtml(value) {{
       return String(value ?? "").replace(/[&<>"']/g, char => ({{
@@ -289,7 +455,7 @@ def memory_dashboard_html(snapshot: dict[str, Any]) -> str:
         ["总数", s.total || 0],
         ["用户", s.user || 0],
         ["会话", s.conversation || 0],
-        ["其他", s.other || 0],
+        ["队列", s.queue_size || 0],
       ].map(([label, value]) => `<div><span class="muted">${{label}}</span><strong>${{value}}</strong></div>`).join("");
     }}
 
@@ -359,6 +525,93 @@ def memory_dashboard_html(snapshot: dict[str, Any]) -> str:
       }}).join("");
     }}
 
+    function renderTraceSummary() {{
+      const s = traceSnapshot.summary || {{}};
+      traceSummaryEl.innerHTML = [
+        ["总数", s.total || 0],
+        ["运行中", s.running || 0],
+        ["成功", s.success || 0],
+        ["错误", s.error || 0],
+      ].map(([label, value]) => `<div><span class="muted">${{label}}</span><strong>${{value}}</strong></div>`).join("") +
+        `<div><span class="muted">平均耗时 ms</span><strong>${{escapeHtml(s.average_duration_ms || 0)}}</strong></div>`;
+    }}
+
+    function renderTraceErrors() {{
+      traceErrorsEl.innerHTML = (traceSnapshot.errors || []).map(error =>
+        `<div class="error">${{escapeHtml(error)}}</div>`
+      ).join("");
+    }}
+
+    function syncTraceComponents() {{
+      const current = traceComponentEl.value;
+      const components = [...new Set((traceSnapshot.traces || []).map(item => item.component).filter(Boolean))].sort();
+      traceComponentEl.innerHTML = '<option value="">全部 component</option>' +
+        components.map(component => `<option value="${{escapeHtml(component)}}">${{escapeHtml(component)}}</option>`).join("");
+      traceComponentEl.value = components.includes(current) ? current : "";
+    }}
+
+    function filteredTraces() {{
+      const q = traceSearchEl.value.trim().toLowerCase();
+      const component = traceComponentEl.value;
+      const status = traceStatusEl.value;
+      return (traceSnapshot.traces || []).filter(item => {{
+        if (component && item.component !== component) return false;
+        if (status && item.status !== status) return false;
+        if (!q) return true;
+        return JSON.stringify(item).toLowerCase().includes(q);
+      }});
+    }}
+
+    function renderTraceList() {{
+      const traces = filteredTraces();
+      if (!traces.length) {{
+        traceListEl.innerHTML = '<div class="empty">没有匹配的 LLM trace</div>';
+        return;
+      }}
+      traceListEl.innerHTML = traces.map(item => {{
+        const messages = JSON.stringify(item.messages || [], null, 2);
+        const usage = JSON.stringify(item.usage || {{}}, null, 2);
+        return `<article class="trace">
+          <div class="memory-head">
+            <div class="badges">
+              <span class="badge">${{escapeHtml(item.status || "running")}}</span>
+              <span class="badge">${{escapeHtml(item.component || "unknown")}}</span>
+              <span class="badge">${{escapeHtml(item.operation || "unknown")}}</span>
+              <span class="id">${{escapeHtml(item.trace_id)}}</span>
+            </div>
+            <div class="muted">${{escapeHtml(item.created_at || "")}} · ${{escapeHtml(item.duration_ms ?? "")}} ms</div>
+          </div>
+          <div class="grid">
+            <div><span class="muted">model</span><div>${{escapeHtml(item.model || "")}}</div></div>
+            <div><span class="muted">thinking</span><div>${{escapeHtml(item.thinking || "")}}</div></div>
+          </div>
+          ${{item.error_message ? `<div class="error">${{escapeHtml(item.error_type || "Error")}}: ${{escapeHtml(item.error_message)}}</div>` : ""}}
+          <details open>
+            <summary>response</summary>
+            <pre>${{escapeHtml(item.response_text || "")}}</pre>
+          </details>
+          <details>
+            <summary>messages</summary>
+            <pre>${{escapeHtml(messages)}}</pre>
+          </details>
+          <details>
+            <summary>usage / options</summary>
+            <pre>${{escapeHtml(JSON.stringify({{
+              response_format: item.response_format || null,
+              temperature: item.temperature ?? null,
+              usage: item.usage || null,
+            }}, null, 2))}}</pre>
+          </details>
+        </article>`;
+      }}).join("");
+    }}
+
+    function renderTraces() {{
+      renderTraceSummary();
+      renderTraceErrors();
+      renderTraceList();
+    }}
+
     async function refresh() {{
       refreshEl.disabled = true;
       try {{
@@ -371,6 +624,37 @@ def memory_dashboard_html(snapshot: dict[str, Any]) -> str:
       }}
     }}
 
+    async function refreshTraces() {{
+      traceRefreshEl.disabled = true;
+      try {{
+        const response = await fetch("/api/llm-traces", {{ cache: "no-store" }});
+        traceSnapshot = await response.json();
+        syncTraceComponents();
+        renderTraces();
+      }} finally {{
+        traceRefreshEl.disabled = false;
+      }}
+    }}
+
+    async function clearTraces() {{
+      traceClearEl.disabled = true;
+      try {{
+        await fetch("/api/llm-traces/clear", {{ method: "POST", cache: "no-store" }});
+        await refreshTraces();
+      }} finally {{
+        traceClearEl.disabled = false;
+      }}
+    }}
+
+    function showPanel(name) {{
+      const showMemory = name === "memory";
+      memoryPanelEl.hidden = !showMemory;
+      llmPanelEl.hidden = showMemory;
+      memoryTabEl.classList.toggle("active", showMemory);
+      llmTabEl.classList.toggle("active", !showMemory);
+      if (!showMemory) refreshTraces();
+    }}
+
     function render() {{
       renderSummary();
       renderErrors();
@@ -381,8 +665,17 @@ def memory_dashboard_html(snapshot: dict[str, Any]) -> str:
     scopeEl.addEventListener("change", renderList);
     kindEl.addEventListener("change", renderList);
     refreshEl.addEventListener("click", refresh);
+    traceSearchEl.addEventListener("input", renderTraceList);
+    traceComponentEl.addEventListener("change", renderTraceList);
+    traceStatusEl.addEventListener("change", renderTraceList);
+    traceRefreshEl.addEventListener("click", refreshTraces);
+    traceClearEl.addEventListener("click", clearTraces);
+    memoryTabEl.addEventListener("click", () => showPanel("memory"));
+    llmTabEl.addEventListener("click", () => showPanel("llm"));
     syncKinds();
     render();
+    refreshTraces();
+    setInterval(refreshTraces, 2000);
   </script>
 </body>
 </html>

@@ -1,10 +1,23 @@
+import uuid
+from pathlib import Path
+
 from qq_group_chatter.memory_dashboard import (
     build_memory_dashboard_snapshot,
+    build_llm_traces_snapshot,
+    clear_llm_traces_api,
+    llm_traces_api,
     memory_dashboard_api,
     memory_dashboard_response,
     memory_dashboard_html,
     setup_memory_dashboard,
 )
+from qq_group_chatter.llm_tracing import LLMTraceStore
+
+
+def trace_path(name):
+    path = Path("tests/.tmp/dashboard-tracing") / f"{uuid.uuid4().hex}-{name}"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    return path
 
 
 class FakePoint:
@@ -66,6 +79,7 @@ class FakeLongTermMemory:
 class FakeApplication:
     def __init__(self):
         self.long_term_memory = FakeLongTermMemory()
+        self.llm_trace_store = None
 
 
 class FakeDriver:
@@ -76,6 +90,39 @@ class FakeDriver:
         self.routes[setup.path.path] = setup
 
 
+def test_setup_memory_dashboard_registers_routes_by_default(monkeypatch):
+    monkeypatch.delenv("QQ_GROUP_CHATTER_MEMORY_DASHBOARD_ENABLED", raising=False)
+    driver = FakeDriver()
+
+    setup_memory_dashboard(driver, FakeApplication())
+
+    assert driver.routes["/memory"].method == "GET"
+    assert driver.routes["/api/memory"].method == "GET"
+    assert driver.routes["/api/llm-traces"].method == "GET"
+    assert driver.routes["/api/llm-traces/clear"].method == "POST"
+
+
+def test_setup_memory_dashboard_can_be_disabled(monkeypatch):
+    monkeypatch.setenv("QQ_GROUP_CHATTER_MEMORY_DASHBOARD_ENABLED", "false")
+    driver = FakeDriver()
+
+    setup_memory_dashboard(driver, FakeApplication())
+
+    assert driver.routes == {}
+
+
+def test_setup_memory_dashboard_registers_routes_when_enabled(monkeypatch):
+    monkeypatch.setenv("QQ_GROUP_CHATTER_MEMORY_DASHBOARD_ENABLED", "true")
+    driver = FakeDriver()
+
+    setup_memory_dashboard(driver, FakeApplication())
+
+    assert driver.routes["/memory"].method == "GET"
+    assert driver.routes["/api/memory"].method == "GET"
+    assert driver.routes["/api/llm-traces"].method == "GET"
+    assert driver.routes["/api/llm-traces/clear"].method == "POST"
+
+
 def test_build_memory_dashboard_snapshot_lists_memories_and_history():
     snapshot = build_memory_dashboard_snapshot(FakeApplication())
 
@@ -84,6 +131,7 @@ def test_build_memory_dashboard_snapshot_lists_memories_and_history():
         "user": 1,
         "conversation": 1,
         "other": 0,
+        "queue_size": 0,
     }
     memories = {item["id"]: item for item in snapshot["memories"]}
     assert memories["mem-user-1"]["content"] == "用户喜欢咖啡"
@@ -111,10 +159,32 @@ async def test_memory_dashboard_handlers_return_html_and_json_responses():
     assert "用户喜欢咖啡" in api_response.content
 
 
-def test_setup_memory_dashboard_registers_html_and_api_routes():
-    driver = FakeDriver()
+def test_memory_dashboard_html_contains_llm_console_assets():
+    html = memory_dashboard_html({"summary": {"total": 0}, "memories": [], "errors": []})
 
-    setup_memory_dashboard(driver, FakeApplication())
+    assert "window.__MEMORY_SNAPSHOT__" in html
+    assert "LLM" in html
+    assert "/api/llm-traces" in html
 
-    assert driver.routes["/memory"].method == "GET"
-    assert driver.routes["/api/memory"].method == "GET"
+
+async def test_llm_trace_dashboard_api_returns_snapshot_and_clear_response():
+    application = FakeApplication()
+    application.llm_trace_store = LLMTraceStore(path=trace_path("traces.jsonl"), max_records=10)
+    application.llm_trace_store.record_start(
+        component="chat_agent",
+        operation="decision",
+        model="deepseek-v4-pro",
+        thinking="disabled",
+        temperature=0.7,
+        response_format=None,
+        messages=[{"role": "user", "content": "hello"}],
+    )
+
+    snapshot = build_llm_traces_snapshot(application)
+    response = await llm_traces_api(application)
+    clear_response = await clear_llm_traces_api(application)
+
+    assert snapshot["summary"]["total"] == 1
+    assert "hello" in response.content
+    assert clear_response.status_code == 200
+    assert build_llm_traces_snapshot(application)["traces"] == []

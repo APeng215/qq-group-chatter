@@ -17,6 +17,9 @@ logger = logging.getLogger("qq_group_chatter")
 
 SENSITIVE_LOG_PATTERNS = [
     re.compile(r"\b\d{11}\b"),
+    re.compile(r"(?i)\b(user_id|group_id|self_id)\s*[:=]\s*\d{5,12}\b"),
+    re.compile(r"(?i)\bconversation_id\s*[:=]\s*qq_(?:group|private):\d{5,12}\b"),
+    re.compile(r"\bqq_(?:user|group|private):\d{5,12}\b"),
     re.compile(
         r"(?i)\b(password|passwd|token|api[\s_-]?key|secret|bearer)\b\s*[:=：是为]\s*['\"]?[^'\"\s,;]+"
     ),
@@ -110,8 +113,20 @@ def record_error(stage: str, error: BaseException) -> None:
 def sanitize_log_text(value: str) -> str:
     sanitized = value
     for pattern in SENSITIVE_LOG_PATTERNS:
-        sanitized = pattern.sub("[REDACTED]", sanitized)
+        sanitized = pattern.sub(_redact_log_match, sanitized)
     return sanitized
+
+
+def _redact_log_match(match: re.Match[str]) -> str:
+    text = match.group(0)
+    if ":" in text and text.startswith("qq_"):
+        prefix = text.split(":", 1)[0]
+        return f"{prefix}:[REDACTED]"
+    if "=" in text:
+        return f"{text.split('=', 1)[0]}=[REDACTED]"
+    if ":" in text:
+        return f"{text.split(':', 1)[0]}:[REDACTED]"
+    return "[REDACTED]"
 
 
 def _sanitized_traceback_text(error: BaseException) -> str:

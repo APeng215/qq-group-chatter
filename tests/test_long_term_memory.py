@@ -7,7 +7,11 @@ from qq_group_chatter.models import (
     LongTermMemoryRecord,
     build_group_conversation_context,
 )
-from qq_group_chatter.services.long_term_memory import LongTermMemoryService, normalize_mem0_records
+from qq_group_chatter.services.long_term_memory import (
+    LongTermMemorySearchError,
+    LongTermMemoryService,
+    normalize_mem0_records,
+)
 
 
 class FakeMem0Client:
@@ -156,7 +160,7 @@ async def test_search_queries_user_and_conversation_memories():
     assert [call["top_k"] for call in mem0.search_calls] == [5, 5]
 
 
-async def test_search_returns_empty_bundle_when_mem0_search_fails(monkeypatch):
+async def test_search_raises_when_mem0_search_fails(monkeypatch):
     mem0 = FakeMem0Client()
     error = RuntimeError("mem0 unavailable")
     mem0.search_raises = error
@@ -167,10 +171,13 @@ async def test_search_returns_empty_bundle_when_mem0_search_fails(monkeypatch):
     )
     service = LongTermMemoryService(mem0_client=mem0, planner=FakePlanner())
 
-    bundle = await service.search("晚上吃川菜吗", context())
+    try:
+        await service.search("晚上吃川菜吗", context())
+    except LongTermMemorySearchError as exc:
+        assert exc.__cause__ is error
+    else:
+        raise AssertionError("search should raise when Mem0 search fails")
 
-    assert bundle.user_memories == []
-    assert bundle.conversation_memories == []
     assert recorded_errors == [
         {"stage": "mem0_search", "exc": error},
         {"stage": "mem0_search", "exc": error},
@@ -316,6 +323,44 @@ async def test_ingestion_uses_job_existing_memories_for_duplicate_skip_without_s
     assert mem0.search_calls == []
     assert mem0.add_calls == []
     assert len(planner.calls) == 1
+
+
+async def test_ingestion_skips_duplicate_adds_within_same_planner_result():
+    mem0 = FakeMem0Client()
+    planner = FakePlanner(
+        [
+            LongTermMemoryOperation(
+                action="add",
+                scope="user",
+                target_id=None,
+                content="用户不吃辣",
+                kind="preference",
+                confidence=0.92,
+            ),
+            LongTermMemoryOperation(
+                action="add",
+                scope="user",
+                target_id=None,
+                content="用户不吃辣",
+                kind="preference",
+                confidence=0.92,
+            ),
+        ]
+    )
+    service = LongTermMemoryService(mem0_client=mem0, planner=planner)
+    await service.start()
+
+    await service.enqueue_ingestion(
+        LongTermMemoryIngestionJob(
+            context=context(),
+            user_message="我不吃辣",
+            existing_memories=LongTermMemoryBundle(user_memories=[], conversation_memories=[]),
+        )
+    )
+    await asyncio.wait_for(service.join(), timeout=1)
+    await service.stop()
+
+    assert len(mem0.add_calls) == 1
 
 
 async def test_ingestion_updates_existing_memory_when_planner_returns_update():
@@ -661,7 +706,7 @@ async def test_ingestion_skips_sensitive_operations_before_mem0_write():
                 action="add",
                 scope="conversation",
                 target_id=None,
-                content="用户住址是上海市浦东新区测试路 1 号",
+                content="用户住在上海市浦东新区测试路 1 号",
                 kind="other",
                 confidence=0.95,
             ),
@@ -690,6 +735,52 @@ async def test_ingestion_skips_sensitive_operations_before_mem0_write():
 
     assert mem0.add_calls == []
     assert mem0.update_calls == []
+
+
+async def test_ingestion_skips_invalid_operations_without_consuming_write_limit():
+    mem0 = FakeMem0Client()
+    planner = FakePlanner(
+        [
+            LongTermMemoryOperation(
+                action="add",
+                scope="user",
+                target_id=None,
+                content="用户密码是 abc123",
+                kind="other",
+                confidence=0.95,
+            ),
+            LongTermMemoryOperation(
+                action="add",
+                scope="user",
+                target_id=None,
+                content="用户 token 是 sk-abcdef123456",
+                kind="other",
+                confidence=0.95,
+            ),
+            LongTermMemoryOperation(
+                action="add",
+                scope="user",
+                target_id=None,
+                content="用户不吃辣",
+                kind="preference",
+                confidence=0.95,
+            ),
+        ]
+    )
+    service = LongTermMemoryService(mem0_client=mem0, planner=planner, max_operations_per_message=2)
+    await service.start()
+
+    await service.enqueue_ingestion(
+        LongTermMemoryIngestionJob(
+            context=context(),
+            user_message="记住我不吃辣",
+            existing_memories=LongTermMemoryBundle(user_memories=[], conversation_memories=[]),
+        )
+    )
+    await asyncio.wait_for(service.join(), timeout=1)
+    await service.stop()
+
+    assert [call["messages"][0]["content"] for call in mem0.add_calls] == ["用户不吃辣"]
 
 
 async def test_ingestion_skips_formatted_phone_numbers_before_mem0_write():

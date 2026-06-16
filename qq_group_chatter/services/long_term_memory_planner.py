@@ -64,7 +64,17 @@ class LongTermMemoryPlanner:
             log_name="memory_planner_llm",
             log_fields={"conversation_type": context.conversation_type},
         ):
-            raw = await self._llm.ainvoke(prompt)
+            try:
+                raw = await self._llm.ainvoke(
+                    prompt,
+                    response_format={"type": "json_object"},
+                    trace_context={
+                        "component": "memory_planner",
+                        "operation": "plan_memory",
+                    },
+                )
+            except TypeError:
+                raw = await self._llm.ainvoke(prompt)
         return self._parse_operations(
             raw,
             user_memories=user_memories,

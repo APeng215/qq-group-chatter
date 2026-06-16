@@ -80,6 +80,8 @@
 - 可观测性在 `qq_group_chatter/observability.py`。
 - 保持结构化日志和 Prometheus 风格指标：消息处理数量/结果、端到端回复耗时、chat agent / memory planner LLM 耗时、Mem0 search/add 耗时、长期记忆队列长度、候选 add/skip/error、duplicate skip、stage + error_type 错误计数。
 - 不要在日志中输出原始 QQ 号、API key 或敏感消息内容。
+- LLM 调用 trace 在 `qq_group_chatter/llm_tracing.py`，默认写入 `logs/llm-traces.jsonl`，用于 `/memory` 里的 LLM 控制台。
+- LLM trace 是本地调试数据，不是普通日志；它会保存原始 messages 和 response，可能包含 QQ 号、昵称、聊天正文、长期记忆片段和搜索正文片段。不要提交、公开或转发该文件。
 
 ## 测试和验证
 
@@ -104,5 +106,5 @@ python -c "from qq_group_chatter.app import create_default_mem0_client; c=create
 
 - 不要把长期记忆 ingestion 延后到生成回复之后；收到有效用户消息后，应在读取短期记忆和查询长期记忆后，携带本轮长期记忆快照投递。
 - 不要把 assistant 回复用于长期记忆 planner。
-- 不要提交 `.env`、`.mem0/`、`*.egg-info/`、缓存目录或 API key。
+- 不要提交 `.env`、`.mem0/`、`logs/llm-traces.jsonl`、`*.egg-info/`、缓存目录或 API key。
 - 修改默认模型、记忆 scope、持久化策略前，先确认用户是否真的改变了需求。
