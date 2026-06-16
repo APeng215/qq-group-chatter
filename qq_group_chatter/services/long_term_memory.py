@@ -385,7 +385,10 @@ class LongTermMemoryService:
                 raw = await asyncio.to_thread(
                     self._mem0.search,
                     query,
-                    filters={"conversation_id": context.conversation_id},
+                    filters={
+                        "user_id": "*",
+                        "conversation_id": context.conversation_id,
+                    },
                     top_k=limit,
                 )
             return normalize_mem0_records(raw)

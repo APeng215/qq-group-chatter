@@ -40,8 +40,14 @@ class FakeMem0Client:
             self.search_calls.append(call)
         if self.search_raises:
             raise self.search_raises
+        if not filters or not any(key in filters for key in ("user_id", "agent_id", "run_id")):
+            raise ValueError(
+                "filters must contain at least one of: user_id, agent_id, run_id."
+            )
         if filters is None:
             key = None
+        elif filters.get("user_id") == "*":
+            key = tuple(sorted(filters.items()))
         elif "user_id" in filters:
             key = filters["user_id"]
         else:
@@ -159,7 +165,7 @@ async def test_search_queries_user_and_conversation_memories():
                 "metadata": {"kind": "conversation_rule"},
             }
         ],
-        (("conversation_id", "qq_group:888888"),): [
+        (("conversation_id", "qq_group:888888"), ("user_id", "*")): [
             {
                 "id": "mem-other-user-1",
                 "memory": "小明在上大学",
@@ -208,7 +214,7 @@ async def test_search_queries_user_and_conversation_memories():
     ]
     assert mem0.search_calls[2] == {
         "query": "晚上吃川菜吗",
-        "filters": {"conversation_id": "qq_group:888888"},
+        "filters": {"user_id": "*", "conversation_id": "qq_group:888888"},
         "top_k": 5,
     }
     assert [call["top_k"] for call in mem0.search_calls] == [5, 5, 5]
@@ -221,7 +227,7 @@ async def test_search_dedupes_global_memories_by_id():
         "qq_conversation:qq_group:888888": [
             {"id": "mem-conv-1", "memory": "当前会话默认中文"}
         ],
-        (("conversation_id", "qq_group:888888"),): [
+        (("conversation_id", "qq_group:888888"), ("user_id", "*")): [
             {"id": "mem-user-1", "memory": "用户不吃辣"},
             {"id": "mem-conv-1", "memory": "当前会话默认中文"},
             {
@@ -253,7 +259,7 @@ async def test_search_dedupes_global_memories_by_id():
 async def test_search_filters_legacy_global_user_owner():
     mem0 = FakeMem0Client()
     mem0.search_results = {
-        (("conversation_id", "qq_group:888888"),): [
+        (("conversation_id", "qq_group:888888"), ("user_id", "*")): [
             {
                 "id": "legacy-user",
                 "memory": "旧个人记忆",
@@ -1302,7 +1308,7 @@ async def test_ingestion_falls_back_to_mem0_search_without_existing_memories():
         },
         {
             "query": "这个群默认说中文",
-            "filters": {"conversation_id": "qq_group:888888"},
+            "filters": {"user_id": "*", "conversation_id": "qq_group:888888"},
             "top_k": 5,
         },
     ]
