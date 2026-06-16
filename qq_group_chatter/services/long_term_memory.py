@@ -28,12 +28,17 @@ from qq_group_chatter.observability import (
 from qq_group_chatter.services.long_term_memory_planner import LongTermMemoryPlanner
 
 
+class LongTermMemorySearchError(RuntimeError):
+    pass
+
+
 SENSITIVE_PATTERNS = [
     re.compile(r"\b\d{11}\b"),
     re.compile(r"(?i)(password|passwd|token|api[\s_-]?key|secret|bearer)\s*[:=：是为]"),
     re.compile(r"(密码|口令|令牌|密钥|秘钥|接口密钥)\s*[:=：是为]"),
     re.compile(r"(手机号|手机号码|电话|联系电话|联系方式)\s*[:=：是为]?"),
     re.compile(r"(住址|地址|家庭地址|公司地址)\s*[:=：是为]?"),
+    re.compile(r"[\u4e00-\u9fff]+住在[\u4e00-\u9fff0-9\s]+(?:省|市|区|县|镇|乡|村|路|街|号)"),
     re.compile(r"(?i)\b(?:sk|ak)-[a-z0-9][a-z0-9_-]{6,}\b"),
 ]
 
@@ -60,6 +65,7 @@ class LongTermMemoryService:
 
     async def start(self) -> None:
         if self._worker is None or self._worker.done():
+            await self._health_check()
             self._worker = asyncio.create_task(self._run_worker())
 
     async def stop(self) -> None:
@@ -120,12 +126,20 @@ class LongTermMemoryService:
         except Exception as exc:
             record_error(stage, exc)
 
+    async def _health_check(self) -> None:
+        await self._search_scope(
+            "__qq_group_chatter_startup_health_check__",
+            "__qq_group_chatter_startup_health_check__",
+            "startup",
+            limit=1,
+        )
+
     async def _process_job(self, job: LongTermMemoryIngestionJob) -> None:
         existing_memories = job.existing_memories
         if existing_memories is None:
             existing_memories = await self.search(job.user_message, job.context)
         try:
-            operations = await self._planner.plan(
+            planned_operations = await self._planner.plan(
                 user_message=job.user_message,
                 context=job.context,
                 user_memories=existing_memories.user_memories,
@@ -136,26 +150,35 @@ class LongTermMemoryService:
             return
 
         writable_count = 0
-        for operation in operations:
+        known_records = LongTermMemoryBundle(
+            user_memories=list(existing_memories.user_memories),
+            conversation_memories=list(existing_memories.conversation_memories),
+        )
+        for operation in planned_operations:
+            if not self._is_valid_operation(operation):
+                await self._ingest_operation(operation, job, known_records)
+                continue
             if operation.action in {"add", "update", "delete"}:
                 if writable_count >= self._max_operations_per_message:
                     continue
                 writable_count += 1
-            await self._ingest_operation(operation, job, existing_memories)
+            ingested = await self._ingest_operation(operation, job, known_records)
+            if ingested is not None:
+                self._remember_ingested_record(known_records, ingested)
 
     async def _ingest_operation(
         self,
         operation: LongTermMemoryOperation,
         job: LongTermMemoryIngestionJob,
         existing_memories: LongTermMemoryBundle,
-    ) -> None:
+    ) -> LongTermMemoryRecord | None:
         if not self._is_valid_operation(operation):
             MEMORY_CANDIDATES_TOTAL.labels(
                 scope=operation.scope,
                 kind=operation.kind,
                 result="validation_skip",
             ).inc()
-            return
+            return None
 
         if operation.action == "skip":
             MEMORY_CANDIDATES_TOTAL.labels(
@@ -163,7 +186,7 @@ class LongTermMemoryService:
                 kind=operation.kind,
                 result="planner_skip",
             ).inc()
-            return
+            return None
 
         target_id = self._target_memory_id(operation, job.context)
         existing_records = self._existing_records_for_scope(operation.scope, existing_memories) or []
@@ -175,7 +198,7 @@ class LongTermMemoryService:
                 kind=operation.kind,
                 result="duplicate_skip",
             ).inc()
-            return
+            return None
 
         if operation.action == "delete":
             target_record = _find_record(existing_records, operation.target_id)
@@ -192,7 +215,7 @@ class LongTermMemoryService:
                     kind=operation.kind,
                     result="validation_skip",
                 ).inc()
-            return
+            return None
 
         if operation.action == "update":
             target_record = _find_record(existing_records, operation.target_id)
@@ -205,10 +228,11 @@ class LongTermMemoryService:
                     kind=operation.kind,
                     result="validation_skip",
                 ).inc()
-            return
+            return None
 
         await self._add_memory(operation.content, target_id, operation, job)
         await self._prune_old_memories(target_id, operation.scope)
+        return LongTermMemoryRecord(id=None, content=operation.content, metadata={"scope": operation.scope})
 
     async def _add_memory(
         self,
@@ -332,7 +356,9 @@ class LongTermMemoryService:
             return normalize_mem0_records(raw)
         except Exception as exc:
             record_error("mem0_search", exc)
-            return []
+            raise LongTermMemorySearchError(
+                f"Failed to search {scope} long-term memory."
+            ) from exc
 
     def _is_valid_operation(self, operation: LongTermMemoryOperation) -> bool:
         if operation.action not in {"add", "update", "delete", "skip"}:
@@ -380,6 +406,16 @@ class LongTermMemoryService:
             if SequenceMatcher(None, normalized_content, normalized_item).ratio() >= self._duplicate_threshold:
                 return True
         return False
+
+    def _remember_ingested_record(
+        self,
+        bundle: LongTermMemoryBundle,
+        record: LongTermMemoryRecord,
+    ) -> None:
+        if record.metadata.get("scope") == "user":
+            bundle.user_memories.append(record)
+        if record.metadata.get("scope") == "conversation":
+            bundle.conversation_memories.append(record)
 
 
 def normalize_mem0_records(raw: Any) -> list[LongTermMemoryRecord]:

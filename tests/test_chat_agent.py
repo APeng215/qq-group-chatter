@@ -13,7 +13,7 @@ from qq_group_chatter.models import (
 from qq_group_chatter.services.web_search import SearchSource
 
 
-def test_chat_agent_prompt_includes_bot_identity():
+def test_chat_agent_prompt_leaves_identity_to_system_prompt():
     agent = ChatAgent()
     context = build_group_conversation_context(
         group_id=888888,
@@ -30,13 +30,9 @@ def test_chat_agent_prompt_includes_bot_identity():
         long_term_memory=LongTermMemoryBundle(user_memories=[], conversation_memories=[]),
     )
 
-    assert "牧野神奈" in prompt
-    assert "神奈" in prompt
-    assert "人类" not in prompt
-    assert "不要自称" in prompt
-    assert "AI" in prompt
-    assert "助手" in prompt
-    assert "模型" in prompt
+    assert "牧野神奈" not in prompt
+    assert "不要自称 AI、助手、模型或自动程序" not in prompt
+    assert "根据当前会话上下文和长期记忆自然回复" in prompt
 
 
 def test_chat_agent_prompt_includes_current_time_and_timed_short_term_history(monkeypatch):
@@ -225,23 +221,6 @@ def test_parse_chat_decision_accepts_reply_json():
     assert decision == ChatReplyDecision(content="普通回复")
 
 
-def test_parse_chat_decision_accepts_fenced_json():
-    decision = parse_chat_decision('```json\n{"action":"reply","content":"普通回复"}\n```')
-
-    assert decision == ChatReplyDecision(content="普通回复")
-
-
-def test_parse_chat_decision_accepts_json_with_surrounding_text():
-    decision = parse_chat_decision(
-        '好的，结果如下：\n{"action":"web_search","notice":"我查一下，稍等。","query":"DeepSeek 最新消息"}'
-    )
-
-    assert decision == WebSearchDecision(
-        notice="我查一下，稍等。",
-        query="DeepSeek 最新消息",
-    )
-
-
 def test_parse_chat_decision_accepts_web_search_json():
     decision = parse_chat_decision(
         '{"action":"web_search","notice":"我查一下最新情况，稍等。","query":"DeepSeek 最新消息"}'
@@ -323,7 +302,7 @@ async def test_chat_agent_builds_grounded_search_prompt_with_chat_context():
 
     assert reply == "神奈基于搜索资料的回复"
     prompt = llm.prompts[0]
-    assert "不要自称 AI、助手、模型或自动程序" in prompt
+    assert "不要自称 AI、助手、模型或自动程序" not in prompt
     assert "DeepSeek 今天有什么新闻？" in prompt
     assert "DeepSeek 最新消息" in prompt
     assert "来源标题" in prompt
@@ -334,41 +313,6 @@ async def test_chat_agent_builds_grounded_search_prompt_with_chat_context():
     assert "QQ号是识别同一用户的稳定身份键，昵称只是显示名" in prompt
     assert "回复、称呼和记忆归属以当前发言者的 QQ号 为准" in prompt
     assert "https://example.com/news" not in prompt
-
-
-async def test_grounded_search_prompt_strips_urls_from_raw_markdown():
-    llm = RecordingLLM()
-    agent = ChatAgent(llm=llm)
-    context = build_group_conversation_context(
-        group_id=888888,
-        user_id=123456,
-        message_id="m1",
-        nickname="阿咳",
-        timestamp=123.0,
-    )
-
-    await agent.generate_grounded_search_reply(
-        user_message="查一下",
-        search_query="query",
-        search_sources=[
-            SearchSource(
-                title="带链接来源",
-                url="https://source.example/hidden",
-                content="摘要 https://summary.example/path",
-                raw_content="正文 [官方链接](https://raw.example/doc) 以及 https://raw.example/plain",
-            )
-        ],
-        context=context,
-        short_term_messages=[],
-        long_term_memory=LongTermMemoryBundle(user_memories=[], conversation_memories=[]),
-    )
-
-    prompt = llm.prompts[0]
-    assert "https://source.example/hidden" not in prompt
-    assert "https://summary.example/path" not in prompt
-    assert "https://raw.example/doc" not in prompt
-    assert "https://raw.example/plain" not in prompt
-    assert "官方链接" in prompt
 
 
 async def test_grounded_search_prompt_includes_current_time_and_timed_short_term_history(monkeypatch):

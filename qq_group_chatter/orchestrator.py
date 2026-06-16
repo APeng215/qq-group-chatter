@@ -8,6 +8,7 @@ from qq_group_chatter.agent.chat_agent import ChatDecision, ChatReplyDecision, W
 from qq_group_chatter.models import (
     ChatMessage,
     ConversationContext,
+    LongTermMemoryBundle,
     LongTermMemoryIngestionJob,
     PendingAssistantReply,
 )
@@ -110,14 +111,22 @@ class ChatOrchestrator:
                     context.conversation_id,
                     limit=self._short_term_limit,
                 )
-                long_term_memory = await self._long_term_memory.search(content, context)
-                await self._long_term_memory.enqueue_ingestion(
-                    LongTermMemoryIngestionJob(
-                        context=context,
-                        user_message=content,
-                        existing_memories=long_term_memory,
+                try:
+                    long_term_memory = await self._long_term_memory.search(content, context)
+                except Exception as exc:
+                    record_error("long_term_memory_search", exc)
+                    long_term_memory = LongTermMemoryBundle(
+                        user_memories=[],
+                        conversation_memories=[],
                     )
-                )
+                else:
+                    await self._long_term_memory.enqueue_ingestion(
+                        LongTermMemoryIngestionJob(
+                            context=context,
+                            user_message=content,
+                            existing_memories=long_term_memory,
+                        )
+                    )
                 decision = await self._chat_agent.generate_reply(
                     user_message=content,
                     context=context,

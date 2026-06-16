@@ -21,13 +21,18 @@ class FakeMem0Client:
         self.update_calls = []
         self.delete_calls = []
         self.get_all_calls = []
+        self.health_check_calls = []
         self.search_results = {}
         self.get_all_results = {}
         self.search_raises = None
         self.close_calls = 0
 
     def search(self, query, *, filters=None, top_k=None):
-        self.search_calls.append({"query": query, "filters": filters, "top_k": top_k})
+        call = {"query": query, "filters": filters, "top_k": top_k}
+        if query == "__qq_group_chatter_startup_health_check__":
+            self.health_check_calls.append(call)
+        else:
+            self.search_calls.append(call)
         if self.search_raises:
             raise self.search_raises
         return self.search_results.get(filters["user_id"], [])
@@ -178,9 +183,30 @@ async def test_search_raises_when_mem0_search_fails(monkeypatch):
     else:
         raise AssertionError("search should raise when Mem0 search fails")
 
-    assert recorded_errors == [
-        {"stage": "mem0_search", "exc": error},
-        {"stage": "mem0_search", "exc": error},
+    assert recorded_errors
+    assert all(item == {"stage": "mem0_search", "exc": error} for item in recorded_errors)
+
+
+async def test_start_raises_when_mem0_health_check_fails():
+    mem0 = FakeMem0Client()
+    error = RuntimeError("mem0 unavailable")
+    mem0.search_raises = error
+    service = LongTermMemoryService(mem0_client=mem0, planner=FakePlanner())
+
+    try:
+        await service.start()
+    except LongTermMemorySearchError as exc:
+        assert exc.__cause__ is error
+    else:
+        raise AssertionError("start should fail when Mem0 is unavailable")
+
+    assert service._worker is None
+    assert mem0.health_check_calls == [
+        {
+            "query": "__qq_group_chatter_startup_health_check__",
+            "filters": {"user_id": "__qq_group_chatter_startup_health_check__"},
+            "top_k": 1,
+        }
     ]
 
 

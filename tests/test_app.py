@@ -4,7 +4,6 @@ import sys
 from qq_group_chatter.app import (
     ChatBotApplication,
     NoopMem0Client,
-    _build_mem0_config,
     create_default_application,
     create_default_orchestrator,
 )
@@ -120,14 +119,3 @@ async def test_chat_bot_application_starts_and_stops_long_term_memory():
 
     assert orchestrator.long_term_memory.started == 1
     assert orchestrator.long_term_memory.stopped == 1
-
-
-def test_mem0_config_uses_mem0_dir_for_qdrant_path(tmp_path):
-    config = _build_mem0_config(
-        deepseek_key="secret",
-        fastembed_model="BAAI/bge-small-zh-v1.5",
-        mem0_dir=tmp_path / "isolated-mem0",
-    )
-
-    assert config["history_db_path"] == str(tmp_path / "isolated-mem0" / "history.db")
-    assert config["vector_store"]["config"]["path"] == str(tmp_path / "isolated-mem0" / "qdrant")

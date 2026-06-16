@@ -167,6 +167,14 @@ def test_memory_dashboard_html_contains_llm_console_assets():
     assert "/api/llm-traces" in html
 
 
+def test_memory_dashboard_html_preserves_trace_detail_expansion_on_refresh():
+    html = memory_dashboard_html({"summary": {"total": 0}, "memories": [], "errors": []})
+
+    assert "captureTraceDetailState" in html
+    assert "restoreTraceDetailState" in html
+    assert "data-detail-key" in html
+
+
 async def test_llm_trace_dashboard_api_returns_snapshot_and_clear_response():
     application = FakeApplication()
     application.llm_trace_store = LLMTraceStore(path=trace_path("traces.jsonl"), max_records=10)

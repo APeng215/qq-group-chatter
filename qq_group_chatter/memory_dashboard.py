@@ -562,13 +562,30 @@ def memory_dashboard_html(snapshot: dict[str, Any]) -> str:
       }});
     }}
 
+    function captureTraceDetailState() {{
+      const state = new Map();
+      traceListEl.querySelectorAll("details[data-detail-key]").forEach(detail => {{
+        state.set(detail.dataset.detailKey, detail.open);
+      }});
+      return state;
+    }}
+
+    function restoreTraceDetailState(state) {{
+      traceListEl.querySelectorAll("details[data-detail-key]").forEach(detail => {{
+        const key = detail.dataset.detailKey;
+        if (state.has(key)) detail.open = state.get(key);
+      }});
+    }}
+
     function renderTraceList() {{
+      const detailState = captureTraceDetailState();
       const traces = filteredTraces();
       if (!traces.length) {{
         traceListEl.innerHTML = '<div class="empty">没有匹配的 LLM trace</div>';
         return;
       }}
       traceListEl.innerHTML = traces.map(item => {{
+        const traceKey = String(item.trace_id || item.created_at || "");
         const messages = JSON.stringify(item.messages || [], null, 2);
         const usage = JSON.stringify(item.usage || {{}}, null, 2);
         return `<article class="trace">
@@ -586,15 +603,15 @@ def memory_dashboard_html(snapshot: dict[str, Any]) -> str:
             <div><span class="muted">thinking</span><div>${{escapeHtml(item.thinking || "")}}</div></div>
           </div>
           ${{item.error_message ? `<div class="error">${{escapeHtml(item.error_type || "Error")}}: ${{escapeHtml(item.error_message)}}</div>` : ""}}
-          <details open>
+          <details data-detail-key="${{escapeHtml(traceKey)}}:response" open>
             <summary>response</summary>
             <pre>${{escapeHtml(item.response_text || "")}}</pre>
           </details>
-          <details>
+          <details data-detail-key="${{escapeHtml(traceKey)}}:messages">
             <summary>messages</summary>
             <pre>${{escapeHtml(messages)}}</pre>
           </details>
-          <details>
+          <details data-detail-key="${{escapeHtml(traceKey)}}:options">
             <summary>usage / options</summary>
             <pre>${{escapeHtml(JSON.stringify({{
               response_format: item.response_format || null,
@@ -604,6 +621,7 @@ def memory_dashboard_html(snapshot: dict[str, Any]) -> str:
           </details>
         </article>`;
       }}).join("");
+      restoreTraceDetailState(detailState);
     }}
 
     function renderTraces() {{
