@@ -52,14 +52,15 @@ def _context_from_event(event) -> ConversationContext | None:
     message_id = str(getattr(event, "message_id", ""))
     user_id = str(getattr(event, "user_id", ""))
     sender = getattr(event, "sender", None)
-    nickname = getattr(sender, "nickname", None) if sender is not None else None
+    nickname = _sender_text(sender, "nickname")
 
     if GroupMessageEvent is not object and isinstance(event, GroupMessageEvent):
+        display_name = _sender_text(sender, "card") or nickname
         return build_group_conversation_context(
             group_id=getattr(event, "group_id"),
             user_id=user_id,
             message_id=message_id,
-            nickname=nickname,
+            nickname=display_name,
             timestamp=timestamp,
         )
     if PrivateMessageEvent is not object and isinstance(event, PrivateMessageEvent):
@@ -70,6 +71,16 @@ def _context_from_event(event) -> ConversationContext | None:
             timestamp=timestamp,
         )
     return None
+
+
+def _sender_text(sender, field: str) -> str | None:
+    if sender is None:
+        return None
+    value = getattr(sender, field, None)
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None
 
 
 def should_handle_message(event, text: str) -> bool:
