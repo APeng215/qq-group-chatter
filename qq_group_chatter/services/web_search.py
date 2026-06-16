@@ -165,17 +165,20 @@ class WebSearchService:
         self._include_urls = include_urls
 
     async def search_reply(self, query: str) -> str:
-        results = await self._client.search(query, max_results=self._max_results)
-        sources = _sources_from_results(
-            results,
-            max_raw_content_chars_per_result=self._max_raw_content_chars_per_result,
-        )
+        sources = await self.search_sources(query)
         if not sources:
             return f"没有找到和「{query}」相关的可读网页正文。"
         return await self._answer_agent.answer(
             query=query,
             sources=sources,
             include_urls=self._include_urls,
+        )
+
+    async def search_sources(self, query: str) -> list[SearchSource]:
+        results = await self._client.search(query, max_results=self._max_results)
+        return _sources_from_results(
+            results,
+            max_raw_content_chars_per_result=self._max_raw_content_chars_per_result,
         )
 
 

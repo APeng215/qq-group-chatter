@@ -18,6 +18,7 @@ from qq_group_chatter.prompt_loader import load_prompt
 
 
 CHAT_AGENT_PROMPT_TEMPLATE = load_prompt("chat_agent.txt")
+CHAT_SEARCH_GROUNDED_PROMPT_TEMPLATE = load_prompt("chat_search_grounded.txt")
 WEB_SEARCH_REQUEST_MARKER = "__NEED_WEB_SEARCH__"
 
 
@@ -82,6 +83,38 @@ class ChatAgent:
             raw = await self._call_llm(prompt)
         return self._content(raw)
 
+    async def generate_grounded_search_reply(
+        self,
+        *,
+        user_message: str,
+        search_query: str,
+        search_sources: list[Any],
+        context: ConversationContext,
+        short_term_messages: list[ChatMessage],
+        long_term_memory: LongTermMemoryBundle,
+    ) -> str:
+        prompt = self._build_grounded_search_prompt(
+            user_message=user_message,
+            search_query=search_query,
+            search_sources=search_sources,
+            context=context,
+            short_term_messages=short_term_messages,
+            long_term_memory=long_term_memory,
+        )
+        if self._llm is None:
+            return "我搜到了一些资料，但现在还没有配置聊天模型来整理成回复。"
+        with observe_duration(
+            metric=LLM_LATENCY_SECONDS,
+            labels={"component": "chat_agent"},
+            log_name="llm_call",
+            log_fields={
+                "component": "chat_agent",
+                **conversation_log_fields(context),
+            },
+        ):
+            raw = await self._call_llm(prompt)
+        return self._content(raw)
+
     async def _call_llm(self, prompt: str) -> Any:
         if hasattr(self._llm, "ainvoke"):
             return await self._llm.ainvoke(prompt)
@@ -113,7 +146,45 @@ class ChatAgent:
             user_message=user_message,
         )
 
+    def _build_grounded_search_prompt(
+        self,
+        *,
+        user_message: str,
+        search_query: str,
+        search_sources: list[Any],
+        context: ConversationContext,
+        short_term_messages: list[ChatMessage],
+        long_term_memory: LongTermMemoryBundle,
+    ) -> str:
+        history = "\n".join(
+            f"{item.nickname or item.role}: {item.content}" for item in short_term_messages
+        )
+        return CHAT_SEARCH_GROUNDED_PROMPT_TEMPLATE.format(
+            bot_identity_prompt=BOT_IDENTITY_PROMPT,
+            conversation_type=context.conversation_type,
+            long_term_memory_section=long_term_memory.as_prompt_section(),
+            short_term_history=history or "\u65e0",
+            user_message=user_message,
+            search_query=search_query,
+            search_sources=_format_search_sources(search_sources),
+        )
+
     def _content(self, raw: Any) -> str:
         if hasattr(raw, "content"):
             return str(raw.content)
         return str(raw)
+
+
+def _format_search_sources(search_sources: list[Any]) -> str:
+    blocks = []
+    for index, source in enumerate(search_sources, start=1):
+        title = str(getattr(source, "title", "") or "无标题")
+        content = str(getattr(source, "content", "") or "无摘要")
+        raw_content = str(getattr(source, "raw_content", "") or "")
+        blocks.append(
+            f"[来源 {index}]\n"
+            f"标题: {title}\n"
+            f"摘要: {content}\n"
+            f"原网页正文:\n{raw_content}"
+        )
+    return "\n\n".join(blocks) or "无"

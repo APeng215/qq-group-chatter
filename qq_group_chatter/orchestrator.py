@@ -42,9 +42,22 @@ class ReplyAgent(Protocol):
         long_term_memory,
     ) -> str: ...
 
+    async def generate_grounded_search_reply(
+        self,
+        *,
+        user_message: str,
+        search_query: str,
+        search_sources: list[Any],
+        context: ConversationContext,
+        short_term_messages: list[ChatMessage],
+        long_term_memory,
+    ) -> str: ...
+
 
 class WebSearch(Protocol):
     async def search_reply(self, query: str) -> str: ...
+
+    async def search_sources(self, query: str) -> list[Any]: ...
 
 
 class ChatOrchestrator:
@@ -115,6 +128,10 @@ class ChatOrchestrator:
                 )
                 reply = await self._resolve_web_search_reply(
                     reply,
+                    user_message=content,
+                    context=context,
+                    short_term_messages=short_term_messages,
+                    long_term_memory=long_term_memory,
                     on_search_start=on_search_start,
                 )
                 return PendingAssistantReply(
@@ -134,6 +151,10 @@ class ChatOrchestrator:
         self,
         reply: str,
         *,
+        user_message: str,
+        context: ConversationContext,
+        short_term_messages: list[ChatMessage],
+        long_term_memory,
         on_search_start: Callable[[str], Awaitable[None] | None] | None,
     ) -> str:
         request = parse_web_search_request(reply)
@@ -150,7 +171,17 @@ class ChatOrchestrator:
             except Exception as exc:
                 record_error("web_search_notice", exc)
         try:
-            return await self._web_search.search_reply(request.query)
+            sources = await self._web_search.search_sources(request.query)
+            if not sources:
+                return "我搜了一下，但没找到足够可靠的网页正文来确认。"
+            return await self._chat_agent.generate_grounded_search_reply(
+                user_message=user_message,
+                search_query=request.query,
+                search_sources=sources,
+                context=context,
+                short_term_messages=short_term_messages,
+                long_term_memory=long_term_memory,
+            )
         except Exception as exc:
             record_error("web_search", exc)
             return "搜索失败，稍后再试。"

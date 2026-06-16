@@ -7,6 +7,7 @@ from qq_group_chatter.models import (
 )
 from qq_group_chatter.orchestrator import ChatOrchestrator
 from qq_group_chatter.services.short_term_memory import ShortTermMemoryService
+from qq_group_chatter.services.web_search import SearchSource
 
 
 class RecordingShortTermMemory:
@@ -70,6 +71,7 @@ class FixedResponder:
     def __init__(self, reply):
         self.reply = reply
         self.calls = []
+        self.grounded_calls = []
 
     async def generate_reply(self, *, user_message, context, short_term_messages, long_term_memory):
         self.calls.append(
@@ -81,15 +83,52 @@ class FixedResponder:
         )
         return self.reply
 
+    async def generate_grounded_search_reply(
+        self,
+        *,
+        user_message,
+        search_query,
+        search_sources,
+        context,
+        short_term_messages,
+        long_term_memory,
+    ):
+        self.grounded_calls.append(
+            {
+                "user_message": user_message,
+                "search_query": search_query,
+                "search_sources": search_sources,
+                "context": context,
+                "short_term_messages": short_term_messages,
+                "long_term_memory": long_term_memory,
+            }
+        )
+        return "神奈基于搜索资料的回复"
+
 
 class FakeWebSearch:
-    def __init__(self, reply="搜索答案"):
+    def __init__(self, reply="搜索答案", sources=None):
         self.reply = reply
-        self.queries = []
+        self.sources = sources
+        self.search_reply_queries = []
+        self.search_sources_queries = []
 
     async def search_reply(self, query):
-        self.queries.append(query)
+        self.search_reply_queries.append(query)
         return self.reply
+
+    async def search_sources(self, query):
+        self.search_sources_queries.append(query)
+        if self.sources is not None:
+            return self.sources
+        return [
+            SearchSource(
+                title="来源标题",
+                url="https://example.com/news",
+                content="摘要",
+                raw_content="原网页正文",
+            )
+        ]
 
 
 async def test_orchestrator_returns_pending_reply_without_recording_assistant_message():
@@ -180,7 +219,7 @@ async def test_orchestrator_runs_web_search_fallback_after_llm_notice():
         "提示: 我查一下再回你。\n"
         "查询: DeepSeek 最新消息"
     )
-    web_search = FakeWebSearch(reply="DeepSeek 搜索答案")
+    web_search = FakeWebSearch()
     notices = []
     orchestrator = ChatOrchestrator(
         short_term_memory=short_term,
@@ -202,9 +241,13 @@ async def test_orchestrator_runs_web_search_fallback_after_llm_notice():
         on_search_start=lambda notice: notices.append(notice),
     )
 
-    assert pending_reply.content == "DeepSeek 搜索答案"
+    assert pending_reply.content == "神奈基于搜索资料的回复"
     assert notices == ["我查一下再回你。"]
-    assert web_search.queries == ["DeepSeek 最新消息"]
+    assert web_search.search_sources_queries == ["DeepSeek 最新消息"]
+    assert web_search.search_reply_queries == []
+    assert responder.grounded_calls[0]["user_message"] == "DeepSeek 今天有什么新闻？"
+    assert responder.grounded_calls[0]["search_query"] == "DeepSeek 最新消息"
+    assert responder.grounded_calls[0]["search_sources"][0].raw_content == "原网页正文"
     assert long_term.enqueued[0].user_message == "DeepSeek 今天有什么新闻？"
     assert [item.content for item in await short_term.get_recent("qq_group:888888")] == [
         "DeepSeek 今天有什么新闻？"
@@ -235,7 +278,8 @@ async def test_orchestrator_does_not_search_for_regular_reply():
     )
 
     assert pending_reply.content == "普通回复"
-    assert web_search.queries == []
+    assert web_search.search_sources_queries == []
+    assert web_search.search_reply_queries == []
     assert notices == []
 
 
@@ -266,3 +310,34 @@ async def test_orchestrator_returns_search_unavailable_when_fallback_has_no_serv
 
     assert pending_reply.content == "我现在没法联网搜索，稍后再试。"
     assert notices == []
+
+
+async def test_orchestrator_returns_no_search_source_message_without_grounded_reply():
+    responder = FixedResponder(
+        "__NEED_WEB_SEARCH__\n"
+        "提示: 我查一下再回你。\n"
+        "查询: DeepSeek 最新消息"
+    )
+    web_search = FakeWebSearch(sources=[])
+    orchestrator = ChatOrchestrator(
+        short_term_memory=ShortTermMemoryService(),
+        long_term_memory=FakeLongTermMemory(),
+        chat_agent=responder,
+        web_search=web_search,
+    )
+    context = build_group_conversation_context(
+        group_id=888888,
+        user_id=123456,
+        message_id="m1",
+        nickname="阿咳",
+        timestamp=123.0,
+    )
+
+    pending_reply = await orchestrator.handle_message(
+        context=context,
+        user_message="DeepSeek 今天有什么新闻？",
+        on_search_start=lambda notice: None,
+    )
+
+    assert pending_reply.content == "我搜了一下，但没找到足够可靠的网页正文来确认。"
+    assert responder.grounded_calls == []

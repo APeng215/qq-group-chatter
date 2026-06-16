@@ -145,6 +145,69 @@ async def test_web_search_service_uses_answer_agent_with_truncated_raw_content()
     )
 
 
+async def test_web_search_service_search_sources_returns_truncated_sources_without_answer_agent():
+    client = FakeSearchClient()
+    answer_agent = FakeAnswerAgent()
+    service = WebSearchService(
+        client=client,
+        answer_agent=answer_agent,
+        max_results=3,
+        max_raw_content_chars_per_result=6,
+        include_urls=False,
+    )
+
+    sources = await service.search_sources("天气")
+
+    assert client.calls == [{"query": "天气", "max_results": 3}]
+    assert answer_agent.calls == []
+    assert sources == [
+        SearchSource(
+            title="来源一",
+            url="https://example.com/one",
+            content="摘要一",
+            raw_content="正文一正文一",
+        ),
+        SearchSource(
+            title="来源二",
+            url="https://example.com/two",
+            content="摘要二",
+            raw_content="正文二",
+        ),
+    ]
+
+
+async def test_web_search_service_search_sources_skips_results_without_raw_content():
+    class MixedClient:
+        async def search(self, query, *, max_results):
+            return [
+                WebSearchResult(
+                    title="空来源",
+                    url="https://example.com/empty",
+                    content="摘要",
+                    raw_content="   ",
+                ),
+                WebSearchResult(
+                    title="有效来源",
+                    url="https://example.com/valid",
+                    content="摘要",
+                    raw_content="正文",
+                ),
+            ]
+
+    service = WebSearchService(client=MixedClient())
+
+    sources = await service.search_sources("天气")
+
+    assert sources == [
+        SearchSource(
+            title="有效来源",
+            url="https://example.com/valid",
+            content="摘要",
+            raw_content="正文",
+        )
+    ]
+
+
 async def test_web_search_service_returns_no_result_without_calling_answer_agent():
     class EmptyClient:
         async def search(self, query, *, max_results):

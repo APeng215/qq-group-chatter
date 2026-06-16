@@ -1,5 +1,11 @@
 from qq_group_chatter.agent.chat_agent import ChatAgent, parse_web_search_request
-from qq_group_chatter.models import LongTermMemoryBundle, build_group_conversation_context
+from qq_group_chatter.models import (
+    ChatMessage,
+    LongTermMemoryBundle,
+    LongTermMemoryRecord,
+    build_group_conversation_context,
+)
+from qq_group_chatter.services.web_search import SearchSource
 
 
 def test_chat_agent_prompt_includes_bot_identity():
@@ -51,3 +57,66 @@ def test_parse_web_search_request_rejects_invalid_protocols():
 
     for reply in invalid_replies:
         assert parse_web_search_request(reply) is None
+
+
+class RecordingLLM:
+    def __init__(self):
+        self.prompts = []
+
+    async def ainvoke(self, prompt):
+        self.prompts.append(prompt)
+        return "神奈基于搜索资料的回复"
+
+
+async def test_chat_agent_builds_grounded_search_prompt_with_chat_context():
+    llm = RecordingLLM()
+    agent = ChatAgent(llm=llm)
+    context = build_group_conversation_context(
+        group_id=888888,
+        user_id=123456,
+        message_id="m1",
+        nickname="阿咳",
+        timestamp=123.0,
+    )
+
+    reply = await agent.generate_grounded_search_reply(
+        user_message="DeepSeek 今天有什么新闻？",
+        search_query="DeepSeek 最新消息",
+        search_sources=[
+            SearchSource(
+                title="来源标题",
+                url="https://example.com/news",
+                content="摘要",
+                raw_content="原网页正文",
+            )
+        ],
+        context=context,
+        short_term_messages=[
+            ChatMessage(
+                conversation_id=context.conversation_id,
+                role="user",
+                content="前文问题",
+                user_id="123456",
+                nickname="阿咳",
+                message_id="m0",
+                timestamp=122.0,
+            )
+        ],
+        long_term_memory=LongTermMemoryBundle(
+            user_memories=[
+                LongTermMemoryRecord(id="mem-user-1", content="用户不吃辣", metadata={})
+            ],
+            conversation_memories=[],
+        ),
+    )
+
+    assert reply == "神奈基于搜索资料的回复"
+    prompt = llm.prompts[0]
+    assert "不要自称 AI、助手、模型或自动程序" in prompt
+    assert "DeepSeek 今天有什么新闻？" in prompt
+    assert "DeepSeek 最新消息" in prompt
+    assert "来源标题" in prompt
+    assert "原网页正文" in prompt
+    assert "前文问题" in prompt
+    assert "用户不吃辣" in prompt
+    assert "https://example.com/news" not in prompt
