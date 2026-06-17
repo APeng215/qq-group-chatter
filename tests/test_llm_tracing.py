@@ -28,6 +28,7 @@ def test_trace_store_groups_events_and_summarizes_statuses():
     store.record_success(
         trace_id=trace_id,
         response_text='{"action":"reply","content":"hi"}',
+        reasoning_content="判断应直接回复。",
         usage={"total_tokens": 12},
         duration_ms=15.2,
     )
@@ -48,6 +49,7 @@ def test_trace_store_groups_events_and_summarizes_statuses():
     assert trace["response_format"] == {"type": "json_object"}
     assert trace["messages"] == [{"role": "user", "content": "hello"}]
     assert trace["response_text"] == '{"action":"reply","content":"hi"}'
+    assert trace["reasoning_content"] == "判断应直接回复。"
     assert trace["usage"] == {"total_tokens": 12}
 
 
@@ -66,7 +68,13 @@ def test_trace_store_keeps_latest_records_and_ignores_malformed_lines():
         response_format=None,
         messages=[],
     )
-    store.record_success(trace_id=first, response_text="first", usage=None, duration_ms=1.0)
+    store.record_success(
+        trace_id=first,
+        response_text="first",
+        reasoning_content=None,
+        usage=None,
+        duration_ms=1.0,
+    )
     second = store.record_start(
         component="chat_agent",
         operation="second",

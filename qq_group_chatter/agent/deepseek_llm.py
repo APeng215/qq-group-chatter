@@ -95,11 +95,14 @@ class DeepSeekChatLLM:
                 )
             raise
 
-        content = response.choices[0].message.content or ""
+        message = response.choices[0].message
+        content = _message_value(message, "content") or ""
+        reasoning_content = _message_value(message, "reasoning_content")
         if self.trace_store is not None and trace_id is not None:
             self.trace_store.record_success(
                 trace_id=trace_id,
                 response_text=content,
+                reasoning_content=reasoning_content,
                 usage=_response_usage(response),
                 duration_ms=(time.perf_counter() - start) * 1000,
             )
@@ -168,3 +171,13 @@ def _response_usage(response: Any) -> dict[str, Any] | None:
         if value is not None:
             result[key] = value
     return result or None
+
+
+def _message_value(message: Any, key: str) -> str | None:
+    if isinstance(message, dict):
+        value = message.get(key)
+    else:
+        value = getattr(message, key, None)
+    if value is None:
+        return None
+    return str(value)

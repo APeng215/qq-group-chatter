@@ -194,6 +194,18 @@ def test_memory_dashboard_html_renders_trace_messages_by_role_and_content():
     assert "${renderTraceMessages(item.messages || [])}" in html
 
 
+def test_memory_dashboard_html_renders_trace_reasoning_content():
+    html = memory_dashboard_html({"summary": {"total": 0}, "memories": [], "errors": []})
+
+    assert "function traceHasReasoningContent(item)" in html
+    assert "function renderTraceReasoning(item)" in html
+    assert "trace-reasoning-content" in html
+    assert "thinking 内容" in html
+    assert "renderTraceSummary(traces)" in html
+    assert "traces.filter(traceHasReasoningContent).length" in html
+    assert "${renderTraceReasoning(item)}" in html
+
+
 def test_memory_dashboard_html_indents_llm_trace_text_blocks():
     html = memory_dashboard_html({"summary": {"total": 0}, "memories": [], "errors": []})
 

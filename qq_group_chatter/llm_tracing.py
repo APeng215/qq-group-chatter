@@ -70,20 +70,22 @@ class LLMTraceStore:
         *,
         trace_id: str,
         response_text: str,
+        reasoning_content: str | None = None,
         usage: dict[str, Any] | None,
         duration_ms: float,
     ) -> None:
-        self._append_event(
-            {
-                "event": "success",
-                "trace_id": trace_id,
-                "updated_at": _now_iso(),
-                "response_text": response_text,
-                "usage": usage,
-                "duration_ms": round(float(duration_ms), 3),
-                "status": "success",
-            }
-        )
+        event = {
+            "event": "success",
+            "trace_id": trace_id,
+            "updated_at": _now_iso(),
+            "response_text": response_text,
+            "usage": usage,
+            "duration_ms": round(float(duration_ms), 3),
+            "status": "success",
+        }
+        if reasoning_content:
+            event["reasoning_content"] = reasoning_content
+        self._append_event(event)
 
     def record_error(
         self,

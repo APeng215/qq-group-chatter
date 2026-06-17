@@ -157,6 +157,41 @@ async def test_deepseek_llm_records_prompt_response_and_usage():
     assert trace["duration_ms"] >= 0
 
 
+async def test_deepseek_llm_records_reasoning_content_when_available():
+    class ReasoningClient(FakeAsyncClient):
+        async def create(self, **kwargs):
+            self.calls.append(kwargs)
+
+            class Message:
+                content = "final answer"
+                reasoning_content = "先判断上下文，再组织回复。"
+
+            class Choice:
+                message = Message()
+
+            class Response:
+                choices = [Choice()]
+
+            return Response()
+
+    store = LLMTraceStore(path=trace_dir("reasoning") / "traces.jsonl", max_records=10)
+    llm = DeepSeekChatLLM(
+        api_key="secret",
+        client=ReasoningClient(),
+        trace_store=store,
+    )
+
+    result = await llm.ainvoke(
+        "hello trace",
+        trace_context={"component": "chat_agent", "operation": "decision"},
+    )
+
+    assert result == "final answer"
+    trace = store.snapshot()["traces"][0]
+    assert trace["response_text"] == "final answer"
+    assert trace["reasoning_content"] == "先判断上下文，再组织回复。"
+
+
 async def test_deepseek_llm_records_error_trace_and_reraises():
     class FailingClient(FakeAsyncClient):
         async def create(self, **kwargs):

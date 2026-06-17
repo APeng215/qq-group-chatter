@@ -378,6 +378,12 @@ def memory_dashboard_html(snapshot: dict[str, Any]) -> str:
       color: var(--code);
       line-height: 1.55;
     }}
+    .trace-reasoning-content {{
+      background: #fff7ed;
+      border: 1px solid #fed7aa;
+      color: #7c2d12;
+      line-height: 1.6;
+    }}
     .trace-tools {{
       grid-template-columns: minmax(220px, 1fr) 160px 160px auto auto;
     }}
@@ -498,6 +504,17 @@ def memory_dashboard_html(snapshot: dict[str, Any]) -> str:
       }}).join("");
     }}
 
+    function traceHasReasoningContent(item) {{
+      return Boolean(String(item?.reasoning_content || "").trim());
+    }}
+
+    function renderTraceReasoning(item) {{
+      if (!traceHasReasoningContent(item)) {{
+        return '<div class="empty">没有 thinking 内容</div>';
+      }}
+      return `<pre class="trace-reasoning-content">${{formatTraceText(item.reasoning_content || "")}}</pre>`;
+    }}
+
     function renderSummary() {{
       const s = snapshot.summary || {{}};
       summaryEl.innerHTML = [
@@ -574,7 +591,7 @@ def memory_dashboard_html(snapshot: dict[str, Any]) -> str:
       }}).join("");
     }}
 
-    function renderTraceSummary() {{
+    function renderTraceSummary(traces = traceSnapshot.traces || []) {{
       const s = traceSnapshot.summary || {{}};
       traceSummaryEl.innerHTML = [
         ["总数", s.total || 0],
@@ -582,6 +599,7 @@ def memory_dashboard_html(snapshot: dict[str, Any]) -> str:
         ["成功", s.success || 0],
         ["错误", s.error || 0],
       ].map(([label, value]) => `<div><span class="muted">${{label}}</span><strong>${{value}}</strong></div>`).join("") +
+        `<div><span class="muted">thinking 内容</span><strong>${{traces.filter(traceHasReasoningContent).length}}</strong></div>` +
         `<div><span class="muted">平均耗时 ms</span><strong>${{escapeHtml(s.average_duration_ms || 0)}}</strong></div>`;
     }}
 
@@ -629,6 +647,7 @@ def memory_dashboard_html(snapshot: dict[str, Any]) -> str:
     function renderTraceList() {{
       const detailState = captureTraceDetailState();
       const traces = filteredTraces();
+      renderTraceSummary(traces);
       if (!traces.length) {{
         traceListEl.innerHTML = '<div class="empty">没有匹配的 LLM trace</div>';
         return;
@@ -651,6 +670,10 @@ def memory_dashboard_html(snapshot: dict[str, Any]) -> str:
             <div><span class="muted">thinking</span><div>${{escapeHtml(item.thinking || "")}}</div></div>
           </div>
           ${{item.error_message ? `<div class="error">${{escapeHtml(item.error_type || "Error")}}: ${{escapeHtml(item.error_message)}}</div>` : ""}}
+          <details data-detail-key="${{escapeHtml(traceKey)}}:reasoning" ${{traceHasReasoningContent(item) ? "open" : ""}}>
+            <summary>thinking 内容</summary>
+            ${{renderTraceReasoning(item)}}
+          </details>
           <details data-detail-key="${{escapeHtml(traceKey)}}:response" open>
             <summary>response</summary>
             <pre>${{formatTraceText(item.response_text || "")}}</pre>
@@ -673,7 +696,6 @@ def memory_dashboard_html(snapshot: dict[str, Any]) -> str:
     }}
 
     function renderTraces() {{
-      renderTraceSummary();
       renderTraceErrors();
       renderTraceList();
     }}
