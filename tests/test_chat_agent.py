@@ -115,6 +115,9 @@ async def test_chat_agent_passes_trace_context_for_decision_call():
     }
     assert llm.calls[0]["response_format"] == {"type": "json_object"}
     assert llm.calls[0]["system_prompt"] is not None
+    assert "牧野神奈" in llm.calls[0]["system_prompt"]
+    assert "不要自称 AI、助手、模型或自动程序" in llm.calls[0]["system_prompt"]
+    assert "不要输出或解释思考过程" in llm.calls[0]["system_prompt"]
     assert "根据当前会话上下文和长期记忆自然回复" in llm.calls[0]["system_prompt"]
     assert "嗯，我知道了。" in llm.calls[0]["system_prompt"]
     assert "普通聊天回复" not in llm.calls[0]["system_prompt"]
@@ -153,6 +156,9 @@ async def test_chat_agent_passes_trace_context_for_grounded_search_call():
     }
     assert llm.calls[0]["response_format"] is None
     assert llm.calls[0]["system_prompt"] is not None
+    assert "牧野神奈" in llm.calls[0]["system_prompt"]
+    assert "不要自称 AI、助手、模型或自动程序" in llm.calls[0]["system_prompt"]
+    assert "不要输出或解释思考过程" in llm.calls[0]["system_prompt"]
     assert "你刚刚为了回答当前问题做了联网搜索" in llm.calls[0]["system_prompt"]
     assert "QQ号是识别同一用户的稳定身份键" in llm.calls[0]["system_prompt"]
     assert "短期上下文是刚发生的对话" in llm.calls[0]["system_prompt"]

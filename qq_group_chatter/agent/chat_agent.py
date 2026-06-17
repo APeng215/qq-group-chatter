@@ -15,18 +15,32 @@ from qq_group_chatter.observability import (
     conversation_log_fields,
     observe_duration,
 )
+from qq_group_chatter.agent.identity import BOT_IDENTITY_PROMPT
 from qq_group_chatter.prompt_loader import load_prompt
 from qq_group_chatter.time_utils import current_time_text, format_time_text
 
 
 CHAT_CONTEXT_RULES = load_prompt("chat_context_rules.txt")
+DEFAULT_CHAT_SYSTEM_PREFIX = load_prompt("deepseek_system.txt").format(
+    bot_identity_prompt=BOT_IDENTITY_PROMPT,
+)
 CHAT_AGENT_PROMPT_TEMPLATE = load_prompt("chat_agent.txt")
-CHAT_AGENT_SYSTEM_PROMPT = load_prompt("chat_agent_system.txt").format(
-    chat_context_rules=CHAT_CONTEXT_RULES,
+CHAT_AGENT_SYSTEM_PROMPT = "\n".join(
+    (
+        DEFAULT_CHAT_SYSTEM_PREFIX,
+        load_prompt("chat_agent_system.txt").format(
+            chat_context_rules=CHAT_CONTEXT_RULES,
+        ),
+    )
 )
 CHAT_SEARCH_GROUNDED_PROMPT_TEMPLATE = load_prompt("chat_search_grounded.txt")
-CHAT_SEARCH_GROUNDED_SYSTEM_PROMPT = load_prompt("chat_search_grounded_system.txt").format(
-    chat_context_rules=CHAT_CONTEXT_RULES,
+CHAT_SEARCH_GROUNDED_SYSTEM_PROMPT = "\n".join(
+    (
+        DEFAULT_CHAT_SYSTEM_PREFIX,
+        load_prompt("chat_search_grounded_system.txt").format(
+            chat_context_rules=CHAT_CONTEXT_RULES,
+        ),
+    )
 )
 
 
