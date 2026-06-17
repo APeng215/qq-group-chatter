@@ -96,17 +96,7 @@ class ChatOrchestrator:
             log_fields=conversation_log_fields(context),
         ):
             try:
-                await self._short_term_memory.add_message(
-                    ChatMessage(
-                        conversation_id=context.conversation_id,
-                        role="user",
-                        content=content,
-                        user_id=context.user_id,
-                        nickname=context.nickname,
-                        message_id=context.message_id,
-                        timestamp=context.timestamp,
-                    )
-                )
+                await self.record_user_message(context=context, user_message=content)
                 short_term_messages = await self._short_term_memory.get_recent(
                     context.conversation_id,
                     limit=self._short_term_limit,
@@ -154,6 +144,27 @@ class ChatOrchestrator:
                 ).inc()
                 record_error("chat_orchestrator", exc)
                 raise
+
+    async def record_user_message(
+        self,
+        *,
+        context: ConversationContext,
+        user_message: str,
+    ) -> None:
+        content = user_message.strip()
+        if not content:
+            return
+        await self._short_term_memory.add_message(
+            ChatMessage(
+                conversation_id=context.conversation_id,
+                role="user",
+                content=content,
+                user_id=context.user_id,
+                nickname=context.nickname,
+                message_id=context.message_id,
+                timestamp=context.timestamp,
+            )
+        )
 
     async def _resolve_decision(
         self,

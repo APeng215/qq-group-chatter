@@ -5,10 +5,13 @@ import pytest
 from qq_group_chatter.models import PendingAssistantReply, build_group_conversation_context
 from qq_group_chatter.plugins.chat import (
     _context_from_event,
+    _handle_message_event,
     _handle_regular_chat,
     _message_text_from_event,
     _send_reply_and_record,
     should_handle_message,
+    should_record_message,
+    should_reply_to_message,
 )
 
 
@@ -24,23 +27,35 @@ def event(**kwargs):
 
 
 def test_should_ignore_bot_own_message():
-    assert should_handle_message(event(user_id=654321, self_id=654321), "hello") is False
+    assert should_record_message(event(user_id=654321, self_id=654321), "hello") is False
 
 
 def test_should_ignore_empty_message():
-    assert should_handle_message(event(), "   ") is False
+    assert should_record_message(event(), "   ") is False
 
 
-def test_should_ignore_group_message_not_addressed_to_bot():
-    assert should_handle_message(event(message_type="group", to_me=False), "hello") is False
+def test_should_record_group_message_not_addressed_to_bot_without_replying():
+    source_event = event(message_type="group", to_me=False)
+
+    assert should_record_message(source_event, "hello") is True
+    assert should_reply_to_message(source_event) is False
+    assert should_handle_message(source_event, "hello") is False
 
 
 def test_should_handle_private_message():
-    assert should_handle_message(event(message_type="private", to_me=False), "hello") is True
+    source_event = event(message_type="private", to_me=False)
+
+    assert should_record_message(source_event, "hello") is True
+    assert should_reply_to_message(source_event) is True
+    assert should_handle_message(source_event, "hello") is True
 
 
 def test_should_handle_group_message_addressed_to_bot():
-    assert should_handle_message(event(message_type="group", to_me=True), "hello") is True
+    source_event = event(message_type="group", to_me=True)
+
+    assert should_record_message(source_event, "hello") is True
+    assert should_reply_to_message(source_event) is True
+    assert should_handle_message(source_event, "hello") is True
 
 
 def test_message_text_from_event_keeps_image_placeholder():
@@ -122,10 +137,19 @@ class FakeBot:
 class FakeOrchestrator:
     def __init__(self):
         self.recorded = []
+        self.recorded_user_messages = []
         self.handle_calls = []
 
     async def record_assistant_reply(self, reply):
         self.recorded.append(reply)
+
+    async def record_user_message(self, *, context, user_message):
+        self.recorded_user_messages.append(
+            {
+                "context": context,
+                "user_message": user_message,
+            }
+        )
 
     async def handle_message(self, *, context, user_message, on_search_start=None):
         self.handle_calls.append(
@@ -152,6 +176,36 @@ def context():
         nickname="alice",
         timestamp=123.0,
     )
+
+
+async def test_group_message_not_addressed_to_bot_is_recorded_without_reply(monkeypatch):
+    class FakeGroupMessageEvent:
+        pass
+
+    class FakePrivateMessageEvent:
+        pass
+
+    monkeypatch.setattr("qq_group_chatter.plugins.chat.GroupMessageEvent", FakeGroupMessageEvent)
+    monkeypatch.setattr("qq_group_chatter.plugins.chat.PrivateMessageEvent", FakePrivateMessageEvent)
+    source_event = FakeGroupMessageEvent()
+    source_event.message_type = "group"
+    source_event.to_me = False
+    source_event.self_id = 654321
+    source_event.group_id = 888888
+    source_event.user_id = 123456
+    source_event.message_id = "m2"
+    source_event.time = 123.0
+    source_event.sender = SimpleNamespace(card="alice", nickname="alice")
+    source_event.message = [{"type": "text", "data": {"text": "刚刚说的上下文"}}]
+
+    bot = FakeBot()
+    orchestrator = FakeOrchestrator()
+
+    await _handle_message_event(bot, source_event, orchestrator)
+
+    assert orchestrator.recorded_user_messages[0]["user_message"] == "刚刚说的上下文"
+    assert orchestrator.handle_calls == []
+    assert bot.sent == []
 
 
 def pending_reply():

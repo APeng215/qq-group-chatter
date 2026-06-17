@@ -33,11 +33,18 @@ if on_message is not None:
     async def handle_nonebot_message(bot: Bot, event: MessageEvent) -> None:
         if orchestrator is None:
             return
+        await _handle_message_event(bot, event, orchestrator)
+
+
+async def _handle_message_event(bot: Bot, event: MessageEvent, orchestrator: ChatOrchestrator) -> None:
         text = _message_text_from_event(event)
-        if not should_handle_message(event, text):
+        if not should_record_message(event, text):
             return
         context = _context_from_event(event)
         if context is None:
+            return
+        if not should_reply_to_message(event):
+            await orchestrator.record_user_message(context=context, user_message=text)
             return
         await _handle_regular_chat(bot, event, context, text, orchestrator)
 
@@ -111,6 +118,10 @@ def _segment_value(segment, field: str):
 
 
 def should_handle_message(event, text: str) -> bool:
+    return should_record_message(event, text) and should_reply_to_message(event)
+
+
+def should_record_message(event, text: str) -> bool:
     if not text.strip():
         return False
 
@@ -119,6 +130,10 @@ def should_handle_message(event, text: str) -> bool:
     if self_id and user_id == self_id:
         return False
 
+    return True
+
+
+def should_reply_to_message(event) -> bool:
     message_type = getattr(event, "message_type", None)
     if message_type == "group" and not bool(getattr(event, "to_me", False)):
         return False
