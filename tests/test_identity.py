@@ -15,8 +15,12 @@ def test_bot_identity_prompt_is_loaded_from_prompt_file():
 def test_prompt_files_are_loaded_from_prompt_directory():
     for name in [
         "bot_identity.txt",
+        "chat_context_rules.txt",
         "chat_agent.txt",
+        "chat_agent_system.txt",
         "deepseek_system.txt",
+        "chat_search_grounded.txt",
+        "chat_search_grounded_system.txt",
         "long_term_memory_planner.txt",
         "long_term_memory_planner_system.txt",
         "long_term_memory_section.txt",

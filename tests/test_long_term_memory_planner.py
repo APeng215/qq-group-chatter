@@ -157,8 +157,9 @@ async def test_planner_prompt_includes_short_term_context_as_auxiliary_history()
     )
 
     assert "短期对话上下文" in llm.prompts[0]
-    assert "assistant：上次你说晚饭想吃咖喱" in llm.prompts[0]
-    assert "阿咳：对，我还是想吃那个" in llm.prompts[0]
+    assert "[神奈] 上次你说晚饭想吃咖喱" in llm.prompts[0]
+    assert "[QQ:123456 昵称:阿咳] 对，我还是想吃那个" in llm.prompts[0]
+    assert "阿咳：对，我还是想吃那个" not in llm.prompts[0]
     assert "只辅助理解本轮用户消息" in llm.prompts[0]
 
 

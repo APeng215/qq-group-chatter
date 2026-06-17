@@ -10,7 +10,6 @@ from qq_group_chatter.models import (
     ConversationContext,
     LongTermMemoryBundle,
 )
-from qq_group_chatter.agent.identity import BOT_IDENTITY_PROMPT
 from qq_group_chatter.observability import (
     LLM_LATENCY_SECONDS,
     conversation_log_fields,
@@ -20,8 +19,15 @@ from qq_group_chatter.prompt_loader import load_prompt
 from qq_group_chatter.time_utils import current_time_text, format_time_text
 
 
+CHAT_CONTEXT_RULES = load_prompt("chat_context_rules.txt")
 CHAT_AGENT_PROMPT_TEMPLATE = load_prompt("chat_agent.txt")
+CHAT_AGENT_SYSTEM_PROMPT = load_prompt("chat_agent_system.txt").format(
+    chat_context_rules=CHAT_CONTEXT_RULES,
+)
 CHAT_SEARCH_GROUNDED_PROMPT_TEMPLATE = load_prompt("chat_search_grounded.txt")
+CHAT_SEARCH_GROUNDED_SYSTEM_PROMPT = load_prompt("chat_search_grounded_system.txt").format(
+    chat_context_rules=CHAT_CONTEXT_RULES,
+)
 
 
 @dataclass(frozen=True)
@@ -116,6 +122,7 @@ class ChatAgent:
             raw = await self._call_llm(
                 prompt,
                 response_format={"type": "json_object"},
+                system_prompt=CHAT_AGENT_SYSTEM_PROMPT,
                 trace_context={
                     "component": "chat_agent",
                     "operation": "decision",
@@ -157,6 +164,7 @@ class ChatAgent:
         ):
             raw = await self._call_llm(
                 prompt,
+                system_prompt=CHAT_SEARCH_GROUNDED_SYSTEM_PROMPT,
                 trace_context={
                     "component": "chat_agent",
                     "operation": "grounded_search_reply",
@@ -169,6 +177,7 @@ class ChatAgent:
         prompt: str,
         *,
         response_format: dict[str, Any] | None = None,
+        system_prompt: str | None = None,
         trace_context: dict[str, str] | None = None,
     ) -> Any:
         if hasattr(self._llm, "ainvoke"):
@@ -177,12 +186,17 @@ class ChatAgent:
                     return await self._llm.ainvoke(
                         prompt,
                         response_format=response_format,
+                        system_prompt=system_prompt,
                         trace_context=trace_context,
                     )
                 except TypeError:
                     pass
             try:
-                return await self._llm.ainvoke(prompt, trace_context=trace_context)
+                return await self._llm.ainvoke(
+                    prompt,
+                    system_prompt=system_prompt,
+                    trace_context=trace_context,
+                )
             except TypeError:
                 return await self._llm.ainvoke(prompt)
         if hasattr(self._llm, "invoke"):
@@ -191,12 +205,17 @@ class ChatAgent:
                     return self._llm.invoke(
                         prompt,
                         response_format=response_format,
+                        system_prompt=system_prompt,
                         trace_context=trace_context,
                     )
                 except TypeError:
                     pass
             try:
-                return self._llm.invoke(prompt, trace_context=trace_context)
+                return self._llm.invoke(
+                    prompt,
+                    system_prompt=system_prompt,
+                    trace_context=trace_context,
+                )
             except TypeError:
                 return self._llm.invoke(prompt)
         if callable(self._llm):
@@ -205,13 +224,18 @@ class ChatAgent:
                     result = self._llm(
                         prompt,
                         response_format=response_format,
+                        system_prompt=system_prompt,
                         trace_context=trace_context,
                     )
                 except TypeError:
                     result = self._llm(prompt)
             else:
                 try:
-                    result = self._llm(prompt, trace_context=trace_context)
+                    result = self._llm(
+                        prompt,
+                        system_prompt=system_prompt,
+                        trace_context=trace_context,
+                    )
                 except TypeError:
                     result = self._llm(prompt)
             if hasattr(result, "__await__"):
@@ -229,7 +253,6 @@ class ChatAgent:
     ) -> str:
         history = _format_short_term_history(short_term_messages)
         return CHAT_AGENT_PROMPT_TEMPLATE.format(
-            bot_identity_prompt=BOT_IDENTITY_PROMPT,
             current_time=current_time_text(),
             conversation_type=context.conversation_type,
             long_term_memory_section=long_term_memory.as_prompt_section(context),
@@ -250,7 +273,6 @@ class ChatAgent:
     ) -> str:
         history = _format_short_term_history(short_term_messages)
         return CHAT_SEARCH_GROUNDED_PROMPT_TEMPLATE.format(
-            bot_identity_prompt=BOT_IDENTITY_PROMPT,
             current_time=current_time_text(),
             conversation_type=context.conversation_type,
             long_term_memory_section=long_term_memory.as_prompt_section(context),

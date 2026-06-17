@@ -180,14 +180,14 @@ def _format_short_term_history(messages: list[ChatMessage]) -> str:
     lines = []
     for message in messages:
         speaker = _message_speaker(message)
-        lines.append(f"- {speaker}：{message.content}")
+        lines.append(f"- {speaker} {message.content}")
     return "\n".join(lines)
 
 
 def _message_speaker(message: ChatMessage) -> str:
     if message.role == "assistant":
-        return "assistant"
-    return _display_nickname(message.nickname)
+        return "[神奈]"
+    return f"[QQ:{message.user_id or '未知'} 昵称:{_display_nickname(message.nickname)}]"
 
 
 def _records_for_scope(
