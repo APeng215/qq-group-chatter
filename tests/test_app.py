@@ -54,7 +54,7 @@ def test_default_orchestrator_uses_deepseek_when_key_exists(monkeypatch):
 
 def test_default_orchestrator_can_disable_deepseek_thinking(monkeypatch):
     monkeypatch.setenv("DEEPSEEK_API_KEY", "secret")
-    monkeypatch.setenv("DEEPSEEK_THINKING", "disabled")
+    monkeypatch.setenv("DEEPSEEK_THINKING", "false")
 
     orchestrator = create_default_orchestrator(mem0_client=NoopMem0Client())
 

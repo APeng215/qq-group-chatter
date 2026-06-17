@@ -4,7 +4,7 @@
 
 - 本项目是 NoneBot2 + OneBot v11 的 QQ 群聊/私聊机器人。
 - Agent 调用走普通 LangChain/LLM 封装；不要引入 LangGraph、checkpointer，或把 Mem0 暴露成 Agent tool。
-- 默认聊天模型是 `deepseek-v4-pro`，`thinking=enabled`。可通过 `DEEPSEEK_THINKING=disabled` 关闭；除非用户明确要求，不要改模型。
+- 默认聊天模型是 `deepseek-v4-pro`，`thinking=enabled`。可通过 `DEEPSEEK_THINKING=false` 关闭；除非用户明确要求，不要改模型。
 - 密钥只允许来自环境变量或本地 `.env`；不要写进代码、测试快照、日志或提交内容。
 
 ## 入口和链路
@@ -47,7 +47,7 @@
 - 长期 ID：
   - 用户：`qq_user:{conversation_id}:{user_id}`
   - 会话：`qq_conversation:{conversation_id}`
-- 长期记忆 planner：`qq_group_chatter/services/long_term_memory_planner.py`，默认 `deepseek-v4-pro` + `thinking=enabled`；可通过 `DEEPSEEK_THINKING=disabled` 关闭。一次调用内完成提取判断和 add/update/skip 决策，不直接给聊天 Agent。
+- 长期记忆 planner：`qq_group_chatter/services/long_term_memory_planner.py`，默认 `deepseek-v4-pro` + `thinking=enabled`；可通过 `DEEPSEEK_THINKING=false` 关闭。一次调用内完成提取判断和 add/update/skip 决策，不直接给聊天 Agent。
 - 长期记忆写入 Mem0 时使用 `infer=False`；记忆提取、合并和跳过决策由项目自己的 `LongTermMemoryPlanner` 负责，不依赖 Mem0 内部 LLM 自动推理。
 - Mem0 `search()` / `get_all()` 的 `filters` 必须至少包含 `user_id`、`agent_id`、`run_id` 之一；不要只用 `conversation_id` 调 Mem0。
 - 查询当前用户和当前会话长期记忆时用 `filters={"user_id": ...}`；查询同会话全局相关记忆时用 `filters={"user_id": "*", "conversation_id": context.conversation_id}`，再由项目代码过滤 owner 和去重。
@@ -56,7 +56,7 @@
 ## DeepSeek 和 Mem0
 
 - `DEEPSEEK_API_KEY` 必填：聊天 Agent 和 Mem0 内部 LLM 都需要。
-- `DEEPSEEK_THINKING` 可选：默认 `enabled`；设为 `disabled`、`false`、`0`、`no` 或 `off` 可关闭项目自己发起的 DeepSeek 调用的 thinking。
+- `DEEPSEEK_THINKING` 可选：默认 `true`；设为 `false` 可关闭项目自己发起的 DeepSeek 调用的 thinking；env 示例统一用 `true` / `false`，解析层兼容 `enabled` / `disabled`。
 - `MEM0_FASTEMBED_MODEL` 可选：默认 `BAAI/bge-small-zh-v1.5`。
 - 当前默认：
   - ChatAgent：`deepseek-v4-pro` + `thinking=enabled`

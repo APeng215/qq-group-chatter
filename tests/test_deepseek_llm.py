@@ -1,6 +1,8 @@
 import uuid
 from pathlib import Path
 
+import pytest
+
 from qq_group_chatter.agent.deepseek_llm import (
     DeepSeekChatLLM,
     _read_dotenv_key,
@@ -199,7 +201,7 @@ def test_factory_uses_env_key_and_default_model(monkeypatch):
 
 def test_factory_allows_disabling_thinking_from_env(monkeypatch):
     monkeypatch.setenv("DEEPSEEK_API_KEY", "secret")
-    monkeypatch.setenv("DEEPSEEK_THINKING", "disabled")
+    monkeypatch.setenv("DEEPSEEK_THINKING", "false")
 
     llm = create_deepseek_chat_llm()
 
@@ -207,12 +209,36 @@ def test_factory_allows_disabling_thinking_from_env(monkeypatch):
     assert llm.thinking == "disabled"
 
 
+def test_factory_allows_enabling_thinking_from_env(monkeypatch):
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "secret")
+    monkeypatch.setenv("DEEPSEEK_THINKING", "true")
+
+    llm = create_deepseek_chat_llm()
+
+    assert llm is not None
+    assert llm.thinking == "enabled"
+
+
+@pytest.mark.parametrize(
+    ("raw_value", "expected"),
+    [("enabled", "enabled"), ("disabled", "disabled")],
+)
+def test_factory_allows_legacy_thinking_mode_aliases(monkeypatch, raw_value, expected):
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "secret")
+    monkeypatch.setenv("DEEPSEEK_THINKING", raw_value)
+
+    llm = create_deepseek_chat_llm()
+
+    assert llm is not None
+    assert llm.thinking == expected
+
+
 def test_factory_reads_thinking_from_dotenv(monkeypatch):
     monkeypatch.setenv("DEEPSEEK_API_KEY", "secret")
     monkeypatch.delenv("DEEPSEEK_THINKING", raising=False)
     monkeypatch.setattr(
         "qq_group_chatter.agent.deepseek_llm._read_dotenv_key",
-        lambda name="DEEPSEEK_API_KEY": "disabled" if name == "DEEPSEEK_THINKING" else None,
+        lambda name="DEEPSEEK_API_KEY": "false" if name == "DEEPSEEK_THINKING" else None,
     )
 
     llm = create_deepseek_chat_llm()

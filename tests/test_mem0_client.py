@@ -110,7 +110,7 @@ def test_default_long_term_memory_service_uses_deepseek_planner(monkeypatch):
 
 def test_default_long_term_memory_service_can_disable_deepseek_thinking(monkeypatch):
     monkeypatch.setenv("DEEPSEEK_API_KEY", "secret")
-    monkeypatch.setenv("DEEPSEEK_THINKING", "disabled")
+    monkeypatch.setenv("DEEPSEEK_THINKING", "false")
 
     from qq_group_chatter.app import create_default_long_term_memory_service
 

@@ -133,9 +133,11 @@ def _read_thinking_mode(env_name: str = "DEEPSEEK_THINKING") -> ThinkingMode:
     if raw is None:
         return "enabled"
     normalized = raw.strip().lower()
+    if normalized in {"1", "true", "yes", "on", "enabled"}:
+        return "enabled"
     if normalized in {"0", "false", "no", "off", "disabled"}:
         return "disabled"
-    return "enabled"
+    raise ValueError(f"{env_name} must be true or false.")
 
 
 def _read_dotenv_key(name: str = "DEEPSEEK_API_KEY", path: str = ".env") -> str | None:
