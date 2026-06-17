@@ -17,6 +17,10 @@
 - QQ号是识别同一用户的稳定身份键，昵称只是显示名；user scope 的记忆归属以当前用户 QQ号 为准。
 - 不要把 QQ号 写进 memory content 本体，content 保持自然语言描述。
 - add 到 user scope 只用于当前发言者自己的长期信息；提到其他人的事实或当前会话公共事实，应 add 到 conversation scope。
+- memory content 要写成可直接给聊天 Agent 使用的自然事实或规则；不要写成“用户说过/用户认为/用户希望/助手应该/助手在回复中”这类元描述。
+- conversation_rule 应写成会话规则本身，例如“本会话回复时，每句话末尾加上「我是猪吗？」”，不要写“助手在回复中每句话末尾...”。
+- user preference 应写成稳定偏好，例如“不喜欢把「猪」当作贬义或骂人的表达”，不要写“用户认为...”。
+- content 尽量短，保留可执行信息，删除“用户要求/用户希望/助手需要”等壳。
 
 输出格式：
-{{"operations":[{{"action":"add","scope":"user","content":"用户偏好用中文交流","kind":"preference","confidence":0.9,"target_id":null}}]}}
+{{"operations":[{{"action":"add","scope":"user","content":"偏好用中文交流","kind":"preference","confidence":0.9,"target_id":null}}]}}

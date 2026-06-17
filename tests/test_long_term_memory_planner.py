@@ -4,7 +4,10 @@ from qq_group_chatter.models import (
     LongTermMemoryRecord,
     build_group_conversation_context,
 )
-from qq_group_chatter.services.long_term_memory_planner import LongTermMemoryPlanner
+from qq_group_chatter.services.long_term_memory_planner import (
+    PLANNER_SYSTEM_PROMPT,
+    LongTermMemoryPlanner,
+)
 
 
 class FakePlannerLLM:
@@ -405,6 +408,15 @@ async def test_planner_prompt_includes_global_memories():
     assert "mem-global-conv-1" in prompt
     assert "当前会话曾聊过旧项目" in prompt
     assert '"scope": "conversation"' in prompt
+
+
+def test_planner_system_prompt_requires_natural_memory_content():
+    assert "可直接给聊天 Agent 使用的自然事实或规则" in PLANNER_SYSTEM_PROMPT
+    assert "不要写成“用户说过/用户认为/用户希望/助手应该/助手在回复中”" in PLANNER_SYSTEM_PROMPT
+    assert "本会话回复时，每句话末尾加上" in PLANNER_SYSTEM_PROMPT
+    assert "不喜欢把「猪」当作贬义或骂人的表达" in PLANNER_SYSTEM_PROMPT
+    assert '"content":"偏好用中文交流"' in PLANNER_SYSTEM_PROMPT
+    assert '"content":"用户偏好用中文交流"' not in PLANNER_SYSTEM_PROMPT
 
 
 async def test_planner_accepts_update_and_delete_for_global_memory_ids():

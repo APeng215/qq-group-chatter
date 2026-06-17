@@ -164,6 +164,57 @@ def test_chat_agent_prompt_labels_current_speaker_to_avoid_mention_confusion():
     assert "回复、称呼和记忆归属以当前发言者的 QQ号 为准" in prompt
 
 
+def test_chat_agent_prompt_treats_group_context_as_background_for_current_speaker():
+    agent = ChatAgent()
+    context = build_group_conversation_context(
+        group_id=888888,
+        user_id=1476381679,
+        message_id="m3",
+        nickname="东方",
+        timestamp=123.0,
+    )
+
+    prompt = agent._build_prompt(
+        user_message="你是猫娘",
+        context=context,
+        short_term_messages=[
+            ChatMessage(
+                conversation_id=context.conversation_id,
+                role="user",
+                content="你能在每句话末尾加个ciallo吗",
+                user_id="1255781812",
+                nickname="冰塘雪狸",
+                message_id="m1",
+                timestamp=121.0,
+            ),
+            ChatMessage(
+                conversation_id=context.conversation_id,
+                role="user",
+                content="放弃目前所有的三种句尾，改成。",
+                user_id="1255781812",
+                nickname="冰塘雪狸",
+                message_id="m2",
+                timestamp=122.0,
+            ),
+        ],
+        long_term_memory=LongTermMemoryBundle(
+            user_memories=[],
+            conversation_memories=[
+                LongTermMemoryRecord(
+                    id="mem-conv-1",
+                    content="助手在回复中每句话末尾加上“ciallo”",
+                    metadata={"kind": "conversation_rule"},
+                )
+            ],
+        ),
+    )
+
+    assert "如果 conversation_type 是 group，你正在 QQ 群聊中回复“当前发言者”" in prompt
+    assert "短期上下文里的其他 QQ号 是群内其他成员，只作为对话背景" in prompt
+    assert "不要把其他成员的个人长期记忆、昵称、偏好或关系当成当前发言者自己的信息" in prompt
+    assert "短期上下文中较新的明确要求优先于较早的会话长期记忆" in prompt
+
+
 def test_chat_agent_prompt_distinguishes_same_nickname_by_qq_number():
     agent = ChatAgent()
     context = build_group_conversation_context(
@@ -312,6 +363,8 @@ async def test_chat_agent_builds_grounded_search_prompt_with_chat_context():
     assert "用户不吃辣" in prompt
     assert "QQ号是识别同一用户的稳定身份键，昵称只是显示名" in prompt
     assert "回复、称呼和记忆归属以当前发言者的 QQ号 为准" in prompt
+    assert "如果 conversation_type 是 group，你正在 QQ 群聊中回复“当前发言者”" in prompt
+    assert "短期上下文中较新的明确要求优先于较早的会话长期记忆" in prompt
     assert "https://example.com/news" not in prompt
 
 
