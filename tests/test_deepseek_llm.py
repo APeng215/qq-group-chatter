@@ -40,7 +40,7 @@ class FakeAsyncClient:
         return Response()
 
 
-async def test_deepseek_llm_calls_v4_pro_with_thinking_disabled():
+async def test_deepseek_llm_calls_v4_pro_with_thinking_enabled_by_default():
     client = FakeAsyncClient()
     llm = DeepSeekChatLLM(api_key="secret", client=client)
 
@@ -49,7 +49,7 @@ async def test_deepseek_llm_calls_v4_pro_with_thinking_disabled():
     assert result == "OK"
     assert client.calls[0]["model"] == "deepseek-v4-pro"
     assert "max_tokens" not in client.calls[0]
-    assert client.calls[0]["extra_body"] == {"thinking": {"type": "disabled"}}
+    assert client.calls[0]["extra_body"] == {"thinking": {"type": "enabled"}}
     assert client.calls[0]["stream"] is False
     assert client.calls[0]["messages"][0]["role"] == "system"
     assert "牧野神奈" in client.calls[0]["messages"][0]["content"]
@@ -146,7 +146,7 @@ async def test_deepseek_llm_records_prompt_response_and_usage():
     assert trace["component"] == "chat_agent"
     assert trace["operation"] == "decision"
     assert trace["model"] == "deepseek-v4-pro"
-    assert trace["thinking"] == "disabled"
+    assert trace["thinking"] == "enabled"
     assert trace["temperature"] == 0.7
     assert trace["response_format"] == {"type": "json_object"}
     assert trace["messages"][1] == {"role": "user", "content": "hello trace"}
@@ -188,22 +188,48 @@ async def test_deepseek_llm_records_error_trace_and_reraises():
 
 def test_factory_uses_env_key_and_default_model(monkeypatch):
     monkeypatch.setenv("DEEPSEEK_API_KEY", "secret")
+    monkeypatch.delenv("DEEPSEEK_THINKING", raising=False)
 
     llm = create_deepseek_chat_llm()
 
     assert llm is not None
     assert llm.model == "deepseek-v4-pro"
+    assert llm.thinking == "enabled"
+
+
+def test_factory_allows_disabling_thinking_from_env(monkeypatch):
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "secret")
+    monkeypatch.setenv("DEEPSEEK_THINKING", "disabled")
+
+    llm = create_deepseek_chat_llm()
+
+    assert llm is not None
+    assert llm.thinking == "disabled"
+
+
+def test_factory_reads_thinking_from_dotenv(monkeypatch):
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "secret")
+    monkeypatch.delenv("DEEPSEEK_THINKING", raising=False)
+    monkeypatch.setattr(
+        "qq_group_chatter.agent.deepseek_llm._read_dotenv_key",
+        lambda name="DEEPSEEK_API_KEY": "disabled" if name == "DEEPSEEK_THINKING" else None,
+    )
+
+    llm = create_deepseek_chat_llm()
+
+    assert llm is not None
     assert llm.thinking == "disabled"
 
 
 def test_factory_allows_flash_for_background_tasks(monkeypatch):
     monkeypatch.setenv("DEEPSEEK_API_KEY", "secret")
+    monkeypatch.delenv("DEEPSEEK_THINKING", raising=False)
 
     llm = create_deepseek_chat_llm(model="deepseek-v4-flash")
 
     assert llm is not None
     assert llm.model == "deepseek-v4-flash"
-    assert llm.thinking == "disabled"
+    assert llm.thinking == "enabled"
 
 
 def test_factory_allows_optional_max_tokens(monkeypatch):
@@ -226,7 +252,7 @@ def test_factory_reads_key_from_dotenv_file(monkeypatch):
     monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
     monkeypatch.setattr(
         "qq_group_chatter.agent.deepseek_llm._read_dotenv_key",
-        lambda: "from-dotenv",
+        lambda name="DEEPSEEK_API_KEY": "from-dotenv" if name == "DEEPSEEK_API_KEY" else None,
     )
 
     llm = create_deepseek_chat_llm()

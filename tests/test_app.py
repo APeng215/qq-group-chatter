@@ -44,10 +44,20 @@ def test_app_import_does_not_import_nonebot_plugin():
 
 def test_default_orchestrator_uses_deepseek_when_key_exists(monkeypatch):
     monkeypatch.setenv("DEEPSEEK_API_KEY", "secret")
+    monkeypatch.delenv("DEEPSEEK_THINKING", raising=False)
 
     orchestrator = create_default_orchestrator(mem0_client=NoopMem0Client())
 
     assert orchestrator._chat_agent._llm.model == "deepseek-v4-pro"
+    assert orchestrator._chat_agent._llm.thinking == "enabled"
+
+
+def test_default_orchestrator_can_disable_deepseek_thinking(monkeypatch):
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "secret")
+    monkeypatch.setenv("DEEPSEEK_THINKING", "disabled")
+
+    orchestrator = create_default_orchestrator(mem0_client=NoopMem0Client())
+
     assert orchestrator._chat_agent._llm.thinking == "disabled"
 
 

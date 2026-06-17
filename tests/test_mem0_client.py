@@ -98,12 +98,24 @@ def test_default_mem0_client_collection_name_tracks_fastembed_model(monkeypatch)
 
 def test_default_long_term_memory_service_uses_deepseek_planner(monkeypatch):
     monkeypatch.setenv("DEEPSEEK_API_KEY", "secret")
+    monkeypatch.delenv("DEEPSEEK_THINKING", raising=False)
 
     from qq_group_chatter.app import create_default_long_term_memory_service
 
     service = create_default_long_term_memory_service(mem0_client=NoopMem0Client())
 
     assert service._planner._llm.model == "deepseek-v4-pro"
+    assert service._planner._llm.thinking == "enabled"
+
+
+def test_default_long_term_memory_service_can_disable_deepseek_thinking(monkeypatch):
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "secret")
+    monkeypatch.setenv("DEEPSEEK_THINKING", "disabled")
+
+    from qq_group_chatter.app import create_default_long_term_memory_service
+
+    service = create_default_long_term_memory_service(mem0_client=NoopMem0Client())
+
     assert service._planner._llm.thinking == "disabled"
 
 

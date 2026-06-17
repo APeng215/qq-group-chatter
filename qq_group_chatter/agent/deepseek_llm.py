@@ -18,7 +18,7 @@ DEEPSEEK_SYSTEM_PROMPT_TEMPLATE = load_prompt("deepseek_system.txt")
 class DeepSeekChatLLM:
     api_key: str
     model: str = "deepseek-v4-pro"
-    thinking: ThinkingMode = "disabled"
+    thinking: ThinkingMode = "enabled"
     temperature: float = 0.7
     max_tokens: int | None = None
     response_format: dict[str, Any] | None = None
@@ -110,7 +110,7 @@ def create_deepseek_chat_llm(
     *,
     api_key: str | None = None,
     model: str = "deepseek-v4-pro",
-    thinking: ThinkingMode = "disabled",
+    thinking: ThinkingMode | None = None,
     max_tokens: int | None = None,
     response_format: dict[str, Any] | None = None,
     trace_store: Any | None = None,
@@ -121,11 +121,21 @@ def create_deepseek_chat_llm(
     return DeepSeekChatLLM(
         api_key=resolved_key,
         model=model,
-        thinking=thinking,
+        thinking=thinking or _read_thinking_mode(),
         max_tokens=max_tokens,
         response_format=response_format,
         trace_store=trace_store,
     )
+
+
+def _read_thinking_mode(env_name: str = "DEEPSEEK_THINKING") -> ThinkingMode:
+    raw = os.getenv(env_name) or _read_dotenv_key(env_name)
+    if raw is None:
+        return "enabled"
+    normalized = raw.strip().lower()
+    if normalized in {"0", "false", "no", "off", "disabled"}:
+        return "disabled"
+    return "enabled"
 
 
 def _read_dotenv_key(name: str = "DEEPSEEK_API_KEY", path: str = ".env") -> str | None:
