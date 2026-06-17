@@ -114,7 +114,7 @@ class WebSearchService:
         *,
         client: WebSearchClient,
         max_results: int = 3,
-        max_raw_content_chars_per_result: int = 3000,
+        max_raw_content_chars_per_result: int = 5000,
     ):
         self._client = client
         self._max_results = max_results
@@ -157,7 +157,7 @@ def create_default_web_search_service() -> WebSearchService | None:
         max_results=_read_int("WEB_SEARCH_MAX_RESULTS", 3),
         max_raw_content_chars_per_result=_read_int(
             "WEB_SEARCH_MAX_RAW_CONTENT_CHARS_PER_RESULT",
-            3000,
+            5000,
         ),
     )
 
@@ -220,4 +220,3 @@ def _read_raw_content_mode(env_name: str, default: str) -> str | bool:
     if normalized in {"1", "true", "yes", "on"}:
         return True
     return raw.strip()
-

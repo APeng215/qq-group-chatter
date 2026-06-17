@@ -67,7 +67,7 @@ class ChatOrchestrator:
         long_term_memory: LongTermMemory,
         chat_agent: ReplyAgent,
         web_search: WebSearch | None = None,
-        short_term_limit: int = 20,
+        short_term_limit: int = 30,
     ):
         self._short_term_memory = short_term_memory
         self._long_term_memory = long_term_memory

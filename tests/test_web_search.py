@@ -155,12 +155,14 @@ def test_default_web_search_service_is_enabled_by_default(monkeypatch):
     monkeypatch.setenv("TAVILY_API_KEY", "tavily-secret")
     monkeypatch.delenv("WEB_SEARCH_ENABLED", raising=False)
     monkeypatch.delenv("WEB_SEARCH_MAX_RESULTS", raising=False)
+    monkeypatch.delenv("WEB_SEARCH_MAX_RAW_CONTENT_CHARS_PER_RESULT", raising=False)
 
     service = create_default_web_search_service()
 
     assert service is not None
     assert isinstance(service._client, TavilySearchClient)
     assert service._max_results == 3
+    assert service._max_raw_content_chars_per_result == 5000
 
 
 def test_default_web_search_service_can_be_disabled(monkeypatch):

@@ -35,7 +35,7 @@
 
 ## 记忆边界
 
-- 短期记忆：`qq_group_chatter/services/short_term_memory.py`，内存版，按 `conversation_id` 保存最近消息；默认每会话 30 条，prompt 默认读最近 20 条。重启丢失是当前 MVP 可接受行为。
+- 短期记忆：`qq_group_chatter/services/short_term_memory.py`，内存版，按 `conversation_id` 保存最近消息；默认每会话 30 条，prompt 默认读最近 30 条。重启丢失是当前 MVP 可接受行为。
 - 短期主键：
   - 群聊：`qq_group:{group_id}`
   - 私聊：`qq_private:{user_id}`
@@ -75,7 +75,7 @@
 - 默认 Tavily 参数：`WEB_SEARCH_DEPTH=basic`、`WEB_SEARCH_MAX_RESULTS=3`、`WEB_SEARCH_INCLUDE_RAW_CONTENT=markdown`、`WEB_SEARCH_INCLUDE_ANSWER=false`、`WEB_SEARCH_TIMEOUT_SECONDS=8`。
 - Tavily 只提供网页来源和 `raw_content`；自动搜索最终回复由 `ChatAgent` 基于 `chat_search_grounded.txt` 生成。
 - 自动搜索默认不向 prompt 暴露 URL；如需展示 URL，应先确认需求并更新 grounded prompt 与来源格式化逻辑。
-- 每条来源正文默认按 `WEB_SEARCH_MAX_RAW_CONTENT_CHARS_PER_RESULT=3000` 截断；prompt 里看到的是网页正文片段，不保证是完整页面。
+- 每条来源正文默认按 `WEB_SEARCH_MAX_RAW_CONTENT_CHARS_PER_RESULT=5000` 截断；prompt 里看到的是网页正文片段，不保证是完整页面。
 - 搜索上下文不写入长期记忆；搜索提示不写入短期记忆；最终搜索增强回复只在发送成功后作为 assistant 回复进入短期记忆。
 
 ## 可观测性
