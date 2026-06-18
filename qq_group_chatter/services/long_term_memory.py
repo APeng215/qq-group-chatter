@@ -54,6 +54,7 @@ class LongTermMemoryService:
         duplicate_threshold: float = 0.88,
         max_operations_per_message: int = 2,
         max_records_per_scope: int = 50,
+        top_k: int = 10,
     ):
         self._mem0 = mem0_client
         self._planner = planner
@@ -61,6 +62,7 @@ class LongTermMemoryService:
         self._duplicate_threshold = duplicate_threshold
         self._max_operations_per_message = max_operations_per_message
         self._max_records_per_scope = max_records_per_scope
+        self._top_k = max(1, int(top_k))
         self._queue: asyncio.Queue[LongTermMemoryIngestionJob | None] = asyncio.Queue()
         self._worker: asyncio.Task[None] | None = None
 
@@ -86,13 +88,19 @@ class LongTermMemoryService:
 
     async def search(self, user_message: str, context: ConversationContext) -> LongTermMemoryBundle:
         user_memories, conversation_memories, global_memories = await asyncio.gather(
-            self._search_scope(user_message, user_memory_id(context), "user"),
+            self._search_scope(
+                user_message,
+                user_memory_id(context),
+                "user",
+                limit=self._top_k,
+            ),
             self._search_scope(
                 user_message,
                 conversation_memory_id(context),
                 "conversation",
+                limit=self._top_k,
             ),
-            self._search_conversation_global(user_message, context),
+            self._search_conversation_global(user_message, context, limit=self._top_k),
         )
         global_memories = _dedupe_global_memories(
             _filter_conversation_global_memories(global_memories, context),

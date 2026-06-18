@@ -28,6 +28,7 @@ class ConversationArchiveService:
         semantic_weight: float = 0.9,
         recency_weight: float = 0.1,
         time_decay_days: float = 90.0,
+        max_messages_per_conversation: int = 5000,
     ):
         self._mem0 = mem0_client
         self._enabled = enabled
@@ -36,6 +37,7 @@ class ConversationArchiveService:
         self._semantic_weight = float(semantic_weight)
         self._recency_weight = float(recency_weight)
         self._time_decay_seconds = max(1.0, float(time_decay_days) * 24 * 60 * 60)
+        self._max_messages_per_conversation = int(max_messages_per_conversation)
         self._queue: asyncio.Queue[ChatMessage | None] = asyncio.Queue()
         self._worker: asyncio.Task[None] | None = None
 
@@ -134,6 +136,28 @@ class ConversationArchiveService:
             },
             infer=False,
         )
+        await self._prune_old_messages(message.conversation_id)
+
+    async def _prune_old_messages(self, conversation_id: str) -> None:
+        if self._max_messages_per_conversation <= 0:
+            return
+        raw = await asyncio.to_thread(
+            self._mem0.get_all,
+            filters={
+                "user_id": _archive_user_id(conversation_id),
+                "conversation_id": conversation_id,
+                "archive_type": "conversation_message",
+            },
+            top_k=max(10000, self._max_messages_per_conversation * 2),
+        )
+        records = _normalize_archive_memory_records(raw)
+        overflow = len(records) - self._max_messages_per_conversation
+        if overflow <= 0:
+            return
+        for record in sorted(records, key=_archive_record_sort_key)[:overflow]:
+            memory_id = record.get("id")
+            if memory_id is not None:
+                await asyncio.to_thread(self._mem0.delete, str(memory_id))
 
     async def _close_mem0(self) -> None:
         await _call_close(getattr(self._mem0, "close", None))
@@ -188,6 +212,23 @@ def _normalize_archive_records(raw: Any) -> list[ConversationArchiveRecord]:
             )
         )
     return records
+
+
+def _normalize_archive_memory_records(raw: Any) -> list[dict[str, Any]]:
+    items = raw.get("results", raw) if isinstance(raw, dict) else raw
+    if not isinstance(items, list):
+        return []
+    return [item for item in items if isinstance(item, dict)]
+
+
+def _archive_record_sort_key(record: dict[str, Any]) -> tuple[float, str]:
+    metadata = record.get("metadata") if isinstance(record.get("metadata"), dict) else {}
+    payload = record.get("payload") if isinstance(record.get("payload"), dict) else {}
+    if not metadata and isinstance(payload.get("metadata"), dict):
+        metadata = payload["metadata"]
+    timestamp = _float_or_zero(metadata.get("timestamp"))
+    memory_id = str(record.get("id") or "")
+    return (timestamp, memory_id)
 
 
 def _exclude_current_message(

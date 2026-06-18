@@ -112,6 +112,7 @@ def test_default_application_wires_persistent_short_term_memory(monkeypatch):
 
 def test_default_application_wires_conversation_archive(monkeypatch):
     monkeypatch.setenv("DEEPSEEK_API_KEY", "secret")
+    monkeypatch.setenv("CONVERSATION_ARCHIVE_MAX_MESSAGES_PER_CONVERSATION", "12")
     monkeypatch.setenv("CONVERSATION_ARCHIVE_TOP_K", "3")
     monkeypatch.setenv("CONVERSATION_ARCHIVE_CANDIDATE_K", "9")
     monkeypatch.setattr("qq_group_chatter.app.create_default_mem0_client", lambda **kwargs: NoopMem0Client())
@@ -120,6 +121,7 @@ def test_default_application_wires_conversation_archive(monkeypatch):
 
     assert application.conversation_archive is not None
     assert application.orchestrator._conversation_archive is application.conversation_archive
+    assert application.conversation_archive._max_messages_per_conversation == 12
     assert application.conversation_archive._top_k == 3
     assert application.conversation_archive._candidate_k == 9
 

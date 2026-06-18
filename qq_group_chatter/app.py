@@ -189,6 +189,7 @@ def create_default_long_term_memory_service(
     return LongTermMemoryService(
         mem0_client=mem0_client or create_default_mem0_client(),
         planner=LongTermMemoryPlanner(llm=resolved_planner_llm),
+        top_k=_read_int("LONG_TERM_MEMORY_TOP_K", 10),
     )
 
 
@@ -211,6 +212,10 @@ def create_default_conversation_archive_service(
         semantic_weight=_read_float("CONVERSATION_ARCHIVE_SEMANTIC_WEIGHT", 0.9),
         recency_weight=_read_float("CONVERSATION_ARCHIVE_RECENCY_WEIGHT", 0.1),
         time_decay_days=_read_float("CONVERSATION_ARCHIVE_TIME_DECAY_DAYS", 90.0),
+        max_messages_per_conversation=_read_int(
+            "CONVERSATION_ARCHIVE_MAX_MESSAGES_PER_CONVERSATION",
+            5000,
+        ),
     )
 
 

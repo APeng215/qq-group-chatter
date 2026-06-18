@@ -137,6 +137,18 @@ def test_default_long_term_memory_service_uses_deepseek_planner(monkeypatch):
 
     assert service._planner._llm.model == "deepseek-v4-pro"
     assert service._planner._llm.thinking == "enabled"
+    assert service._top_k == 10
+
+
+def test_default_long_term_memory_service_reads_top_k(monkeypatch):
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "secret")
+    monkeypatch.setenv("LONG_TERM_MEMORY_TOP_K", "7")
+
+    from qq_group_chatter.app import create_default_long_term_memory_service
+
+    service = create_default_long_term_memory_service(mem0_client=NoopMem0Client())
+
+    assert service._top_k == 7
 
 
 def test_default_long_term_memory_service_can_disable_deepseek_thinking(monkeypatch):

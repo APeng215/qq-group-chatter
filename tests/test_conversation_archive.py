@@ -3,10 +3,13 @@ from qq_group_chatter.services.conversation_archive import ConversationArchiveSe
 
 
 class FakeMem0Client:
-    def __init__(self, search_results=None):
+    def __init__(self, search_results=None, get_all_results=None):
         self.add_calls = []
         self.search_calls = []
+        self.get_all_calls = []
+        self.delete_calls = []
         self.search_results = search_results or []
+        self.get_all_results = get_all_results or []
 
     def add(self, messages, *, user_id, metadata=None, infer=True):
         self.add_calls.append(
@@ -22,6 +25,14 @@ class FakeMem0Client:
     def search(self, query, *, filters=None, top_k=None):
         self.search_calls.append({"query": query, "filters": filters, "top_k": top_k})
         return self.search_results
+
+    def get_all(self, *, filters=None, top_k=20):
+        self.get_all_calls.append({"filters": filters, "top_k": top_k})
+        return self.get_all_results
+
+    def delete(self, memory_id):
+        self.delete_calls.append(memory_id)
+        return {"id": memory_id}
 
 
 def message(*, content="苹果太酸了", message_id="m1", timestamp=1000.0):
@@ -70,6 +81,66 @@ async def test_archive_enqueue_writes_message_with_archive_metadata():
             "infer": False,
         }
     ]
+
+
+async def test_archive_enqueue_prunes_old_messages_after_write():
+    mem0 = FakeMem0Client(
+        get_all_results=[
+            {
+                "id": "old",
+                "memory": "旧消息",
+                "metadata": {
+                    "archive_type": "conversation_message",
+                    "conversation_id": "qq_group:888888",
+                    "message_id": "old",
+                    "timestamp": 100.0,
+                },
+            },
+            {
+                "id": "new",
+                "memory": "新消息",
+                "metadata": {
+                    "archive_type": "conversation_message",
+                    "conversation_id": "qq_group:888888",
+                    "message_id": "new",
+                    "timestamp": 200.0,
+                },
+            },
+        ]
+    )
+    service = ConversationArchiveService(
+        mem0_client=mem0,
+        max_messages_per_conversation=1,
+    )
+
+    await service.enqueue_message(message())
+    await service.join()
+
+    assert mem0.get_all_calls == [
+        {
+            "filters": {
+                "user_id": "qq_archive:qq_group:888888",
+                "conversation_id": "qq_group:888888",
+                "archive_type": "conversation_message",
+            },
+            "top_k": 10000,
+        }
+    ]
+    assert mem0.delete_calls == ["old"]
+
+
+async def test_archive_enqueue_skips_prune_when_limit_is_disabled():
+    mem0 = FakeMem0Client()
+    service = ConversationArchiveService(
+        mem0_client=mem0,
+        max_messages_per_conversation=0,
+    )
+
+    await service.enqueue_message(message())
+    await service.join()
+
+    assert mem0.get_all_calls == []
+    assert mem0.delete_calls == []
 
 
 async def test_archive_search_filters_current_conversation_and_returns_records():

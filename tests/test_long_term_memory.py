@@ -224,9 +224,9 @@ async def test_search_queries_user_and_conversation_memories():
     assert mem0.search_calls[2] == {
         "query": "晚上吃川菜吗",
         "filters": {"user_id": "*", "conversation_id": "qq_group:888888"},
-        "top_k": 5,
+        "top_k": 10,
     }
-    assert [call["top_k"] for call in mem0.search_calls] == [5, 5, 5]
+    assert [call["top_k"] for call in mem0.search_calls] == [10, 10, 10]
 
 
 async def test_search_dedupes_global_memories_by_id():
@@ -1538,17 +1538,17 @@ async def test_ingestion_falls_back_to_mem0_search_without_existing_memories():
         {
             "query": "这个群默认说中文",
             "filters": {"user_id": GROUP_USER_MEMORY_ID},
-            "top_k": 5,
+            "top_k": 10,
         },
         {
             "query": "这个群默认说中文",
             "filters": {"user_id": "qq_conversation:qq_group:888888"},
-            "top_k": 5,
+            "top_k": 10,
         },
         {
             "query": "这个群默认说中文",
             "filters": {"user_id": "*", "conversation_id": "qq_group:888888"},
-            "top_k": 5,
+            "top_k": 10,
         },
     ]
 
