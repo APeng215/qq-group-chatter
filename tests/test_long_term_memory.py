@@ -3,6 +3,7 @@ import asyncio
 from qq_group_chatter.models import build_private_conversation_context
 from qq_group_chatter.models import (
     ChatMessage,
+    ErrorNoticeContext,
     LongTermMemoryBundle,
     LongTermMemoryIngestionJob,
     LongTermMemoryOperation,
@@ -111,6 +112,7 @@ class FakePlanner:
         conversation_memories,
         global_memories=None,
         short_term_messages=None,
+        assistant_reply=None,
     ):
         self.calls.append(
             {
@@ -120,6 +122,7 @@ class FakePlanner:
                 "conversation_memories": conversation_memories,
                 "global_memories": global_memories or [],
                 "short_term_messages": short_term_messages or [],
+                "assistant_reply": assistant_reply,
             }
         )
         if self.raises:
@@ -331,6 +334,69 @@ def test_user_memory_owner_differs_between_group_and_private_conversations():
     assert user_memory_id(group_context) != user_memory_id(private_context)
 
 
+async def test_same_user_long_term_memory_search_isolated_between_groups():
+    first_group_context = build_group_conversation_context(
+        group_id=888888,
+        user_id=123456,
+        message_id="m1",
+        nickname="阿咳",
+        timestamp=123.0,
+    )
+    second_group_context = build_group_conversation_context(
+        group_id=999999,
+        user_id=123456,
+        message_id="m2",
+        nickname="阿咳",
+        timestamp=456.0,
+    )
+    mem0 = FakeMem0Client()
+    mem0.search_results = {
+        "qq_user:qq_group:888888:123456": [{"id": "first-user", "memory": "一群记忆"}],
+        "qq_conversation:qq_group:888888": [{"id": "first-conv", "memory": "一群规则"}],
+        "qq_user:qq_group:999999:123456": [{"id": "second-user", "memory": "二群记忆"}],
+        "qq_conversation:qq_group:999999": [{"id": "second-conv", "memory": "二群规则"}],
+        (("conversation_id", "qq_group:888888"), ("user_id", "*")): [
+            {
+                "id": "first-global",
+                "memory": "一群全局记忆",
+                "metadata": {
+                    "conversation_id": "qq_group:888888",
+                    "user_id": "qq_user:qq_group:888888:654321",
+                },
+            }
+        ],
+        (("conversation_id", "qq_group:999999"), ("user_id", "*")): [
+            {
+                "id": "second-global",
+                "memory": "二群全局记忆",
+                "metadata": {
+                    "conversation_id": "qq_group:999999",
+                    "user_id": "qq_user:qq_group:999999:654321",
+                },
+            }
+        ],
+    }
+    service = LongTermMemoryService(mem0_client=mem0, planner=FakePlanner())
+
+    first_bundle = await service.search("记忆", first_group_context)
+    second_bundle = await service.search("记忆", second_group_context)
+
+    assert [record.content for record in first_bundle.user_memories] == ["一群记忆"]
+    assert [record.content for record in first_bundle.conversation_memories] == ["一群规则"]
+    assert [record.content for record in first_bundle.global_memories] == ["一群全局记忆"]
+    assert [record.content for record in second_bundle.user_memories] == ["二群记忆"]
+    assert [record.content for record in second_bundle.conversation_memories] == ["二群规则"]
+    assert [record.content for record in second_bundle.global_memories] == ["二群全局记忆"]
+    assert [call["filters"] for call in mem0.search_calls] == [
+        {"user_id": "qq_user:qq_group:888888:123456"},
+        {"user_id": "qq_conversation:qq_group:888888"},
+        {"user_id": "*", "conversation_id": "qq_group:888888"},
+        {"user_id": "qq_user:qq_group:999999:123456"},
+        {"user_id": "qq_conversation:qq_group:999999"},
+        {"user_id": "*", "conversation_id": "qq_group:999999"},
+    ]
+
+
 async def test_search_raises_when_mem0_search_fails(monkeypatch):
     mem0 = FakeMem0Client()
     error = RuntimeError("mem0 unavailable")
@@ -513,6 +579,104 @@ async def test_ingestion_passes_short_term_messages_to_planner():
     await service._process_job(job)
 
     assert planner.calls[0]["short_term_messages"] is short_term_messages
+
+
+async def test_ingestion_passes_assistant_reply_to_planner():
+    mem0 = FakeMem0Client()
+    planner = FakePlanner()
+    service = LongTermMemoryService(mem0_client=mem0, planner=planner)
+
+    await service.enqueue_ingestion(
+        LongTermMemoryIngestionJob(
+            context=context(),
+            user_message="以后说话可爱一点",
+            assistant_reply="好呀，那我以后会更可爱一点跟你说话。",
+            existing_memories=LongTermMemoryBundle(user_memories=[], conversation_memories=[]),
+        )
+    )
+    job = await service._queue.get()
+    await service._process_job(job)
+
+    assert planner.calls[0]["assistant_reply"] == "好呀，那我以后会更可爱一点跟你说话。"
+
+
+async def test_ingestion_returns_visible_error_when_mem0_add_fails():
+    class AddFailingMem0Client(FakeMem0Client):
+        def add(self, messages, *, user_id, metadata=None, infer=True):
+            super().add(messages, user_id=user_id, metadata=metadata, infer=infer)
+            raise RuntimeError("api_key=sk-secret failed")
+
+    mem0 = AddFailingMem0Client()
+    planner = FakePlanner(
+        [
+            LongTermMemoryOperation(
+                action="add",
+                scope="user",
+                target_id=None,
+                content="用户不吃辣",
+                kind="preference",
+                confidence=0.92,
+            )
+        ]
+    )
+    service = LongTermMemoryService(mem0_client=mem0, planner=planner)
+
+    notice = await service._process_job(
+        LongTermMemoryIngestionJob(
+            context=context(),
+            user_message="我不吃辣",
+            assistant_reply="好，我记住了。",
+            existing_memories=LongTermMemoryBundle(user_memories=[], conversation_memories=[]),
+        )
+    )
+
+    assert notice is not None
+    assert notice.stage == "mem0_add"
+    assert notice.error_type == "RuntimeError"
+    assert notice.impact == "刚刚这条消息可能没能写入长期记忆。"
+    assert "sk-secret" not in repr(notice)
+
+
+async def test_worker_calls_error_notice_callback_for_visible_mem0_write_error():
+    class AddFailingMem0Client(FakeMem0Client):
+        def add(self, messages, *, user_id, metadata=None, infer=True):
+            super().add(messages, user_id=user_id, metadata=metadata, infer=infer)
+            raise RuntimeError("write failed")
+
+    notices = []
+    planner = FakePlanner(
+        [
+            LongTermMemoryOperation(
+                action="add",
+                scope="user",
+                target_id=None,
+                content="用户不吃辣",
+                kind="preference",
+                confidence=0.92,
+            )
+        ]
+    )
+    service = LongTermMemoryService(mem0_client=AddFailingMem0Client(), planner=planner)
+    await service.start()
+
+    await service.enqueue_ingestion(
+        LongTermMemoryIngestionJob(
+            context=context(),
+            user_message="我不吃辣",
+            existing_memories=LongTermMemoryBundle(user_memories=[], conversation_memories=[]),
+            on_error_notice=lambda notice: notices.append(notice),
+        )
+    )
+    await asyncio.wait_for(service.join(), timeout=1)
+    await service.stop()
+
+    assert notices == [
+        ErrorNoticeContext(
+            stage="mem0_add",
+            error_type="RuntimeError",
+            impact="刚刚这条消息可能没能写入长期记忆。",
+        )
+    ]
 
 
 async def test_ingestion_uses_job_existing_memories_for_duplicate_skip_without_search():

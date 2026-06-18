@@ -1,6 +1,9 @@
+import pytest
+
 from qq_group_chatter.agent.chat_agent import ChatAgent, ChatReplyDecision, WebSearchDecision
 from qq_group_chatter.models import (
     ChatMessage,
+    ErrorNoticeContext,
     LongTermMemoryBundle,
     LongTermMemoryRecord,
     build_group_conversation_context,
@@ -55,12 +58,26 @@ class FailingLongTermMemory(FakeLongTermMemory):
         raise RuntimeError("mem0 unavailable")
 
 
+class EnqueueFailingLongTermMemory(FakeLongTermMemory):
+    async def enqueue_ingestion(self, job):
+        raise RuntimeError("api_key=sk-secret failed")
+
+
 class FakeResponder:
     def __init__(self, events=None):
         self.events = events
         self.calls = []
+        self.error_notice_calls = []
 
-    async def generate_reply(self, *, user_message, context, short_term_messages, long_term_memory):
+    async def generate_reply(
+        self,
+        *,
+        user_message,
+        context,
+        short_term_messages,
+        long_term_memory,
+        memory_warning=None,
+    ):
         if self.events is not None:
             self.events.append("agent.generate_reply")
         self.calls.append(
@@ -68,9 +85,19 @@ class FakeResponder:
                 "user_message": user_message,
                 "short_term_messages": short_term_messages,
                 "long_term_memory": long_term_memory,
+                "memory_warning": memory_warning,
             }
         )
         return ChatReplyDecision(content="好的")
+
+    async def generate_error_notice(self, *, error_context, context):
+        self.error_notice_calls.append(
+            {
+                "error_context": error_context,
+                "context": context,
+            }
+        )
+        return "记忆好像出了点小问题。"
 
 
 class FixedResponder:
@@ -78,13 +105,23 @@ class FixedResponder:
         self.decision = decision
         self.calls = []
         self.grounded_calls = []
+        self.error_notice_calls = []
 
-    async def generate_reply(self, *, user_message, context, short_term_messages, long_term_memory):
+    async def generate_reply(
+        self,
+        *,
+        user_message,
+        context,
+        short_term_messages,
+        long_term_memory,
+        memory_warning=None,
+    ):
         self.calls.append(
             {
                 "user_message": user_message,
                 "short_term_messages": short_term_messages,
                 "long_term_memory": long_term_memory,
+                "memory_warning": memory_warning,
             }
         )
         return self.decision
@@ -110,6 +147,15 @@ class FixedResponder:
             }
         )
         return "神奈基于搜索资料的回复"
+
+    async def generate_error_notice(self, *, error_context, context):
+        self.error_notice_calls.append(
+            {
+                "error_context": error_context,
+                "context": context,
+            }
+        )
+        return "记忆好像出了点小问题。"
 
 
 class FakeWebSearch:
@@ -153,17 +199,17 @@ async def test_orchestrator_returns_pending_reply_without_recording_assistant_me
 
     assert pending_reply is not None
     assert pending_reply.content == "好的"
-    assert long_term.enqueued[0].user_message == "我不吃辣"
+    assert long_term.enqueued == []
     assert long_term.search_calls[0]["user_message"] == "我不吃辣"
     assert [item.content for item in responder.calls[0]["short_term_messages"]] == ["我不吃辣"]
-    assert [item.content for item in long_term.enqueued[0].short_term_messages] == ["我不吃辣"]
+    assert pending_reply.user_message == "我不吃辣"
+    assert [item.content for item in pending_reply.short_term_messages] == ["我不吃辣"]
+    assert pending_reply.long_term_memory is responder.calls[0]["long_term_memory"]
     assert responder.calls[0]["long_term_memory"].user_memories[0].content == "用户不吃辣"
-    assert long_term.enqueued[0].existing_memories is responder.calls[0]["long_term_memory"]
     assert events == [
         "short_term.add",
         "short_term.get_recent",
         "long_term.search",
-        "long_term.enqueue",
         "agent.generate_reply",
     ]
     assert [item.content for item in await short_term.get_recent("qq_group:888888")] == ["我不吃辣"]
@@ -200,6 +246,43 @@ async def test_orchestrator_reads_thirty_short_term_messages_by_default():
     assert short_term.requested_limits == [30]
 
 
+async def test_orchestrator_passes_only_thirty_messages_when_memory_stores_more():
+    short_term = ShortTermMemoryService(max_messages_per_conversation=300)
+    long_term = FakeLongTermMemory()
+    responder = FakeResponder()
+    orchestrator = ChatOrchestrator(
+        short_term_memory=short_term,
+        long_term_memory=long_term,
+        chat_agent=responder,
+    )
+    context = build_group_conversation_context(
+        group_id=888888,
+        user_id=123456,
+        message_id="m1",
+        nickname="阿咳",
+        timestamp=123.0,
+    )
+    for index in range(35):
+        await short_term.add_message(
+            ChatMessage(
+                conversation_id=context.conversation_id,
+                role="user",
+                content=f"历史-{index}",
+                user_id=context.user_id,
+                nickname=context.nickname,
+                message_id=f"history-{index}",
+                timestamp=float(index),
+            )
+        )
+
+    await orchestrator.handle_message(context=context, user_message="最新消息")
+
+    contents = [item.content for item in responder.calls[0]["short_term_messages"]]
+    assert len(contents) == 30
+    assert contents[0] == "历史-6"
+    assert contents[-1] == "最新消息"
+
+
 async def test_orchestrator_records_assistant_message_after_send_success():
     short_term = ShortTermMemoryService(max_messages_per_conversation=10)
     long_term = FakeLongTermMemory()
@@ -220,6 +303,10 @@ async def test_orchestrator_records_assistant_message_after_send_success():
     pending_reply = await orchestrator.handle_message(context=context, user_message="我不吃辣")
     await orchestrator.record_assistant_reply(pending_reply)
 
+    assert long_term.enqueued[0].user_message == "我不吃辣"
+    assert long_term.enqueued[0].assistant_reply == "好的"
+    assert [item.content for item in long_term.enqueued[0].short_term_messages] == ["我不吃辣"]
+    assert long_term.enqueued[0].existing_memories is pending_reply.long_term_memory
     assert [item.content for item in await short_term.get_recent("qq_group:888888")] == [
         "我不吃辣",
         "好的",
@@ -243,7 +330,7 @@ async def test_orchestrator_ignores_empty_messages():
     assert await orchestrator.handle_message(context=context, user_message="   ") is None
 
 
-async def test_orchestrator_continues_reply_but_skips_ingestion_when_memory_search_fails():
+async def test_orchestrator_continues_reply_and_passes_warning_when_memory_search_fails():
     long_term = FailingLongTermMemory()
     responder = FakeResponder()
     orchestrator = ChatOrchestrator(
@@ -263,10 +350,80 @@ async def test_orchestrator_continues_reply_but_skips_ingestion_when_memory_sear
 
     assert pending_reply.content == "好的"
     assert long_term.enqueued == []
+    assert responder.calls[0]["memory_warning"] == ErrorNoticeContext(
+        stage="long_term_memory_search",
+        error_type="RuntimeError",
+        impact="本轮回复可能没有用上长期记忆。",
+    )
+    assert "mem0 unavailable" not in repr(responder.calls[0]["memory_warning"])
     assert responder.calls[0]["long_term_memory"] == LongTermMemoryBundle(
         user_memories=[],
         conversation_memories=[],
     )
+
+
+async def test_record_assistant_reply_reports_enqueue_failure_without_raising(monkeypatch):
+    short_term = ShortTermMemoryService(max_messages_per_conversation=10)
+    long_term = EnqueueFailingLongTermMemory()
+    responder = FakeResponder()
+    recorded_errors = []
+    monkeypatch.setattr(
+        "qq_group_chatter.orchestrator.record_error",
+        lambda stage, exc: recorded_errors.append({"stage": stage, "exc": exc}),
+    )
+    orchestrator = ChatOrchestrator(
+        short_term_memory=short_term,
+        long_term_memory=long_term,
+        chat_agent=responder,
+    )
+    context = build_group_conversation_context(
+        group_id=888888,
+        user_id=123456,
+        message_id="m1",
+        nickname="阿咳",
+        timestamp=123.0,
+    )
+    pending_reply = await orchestrator.handle_message(context=context, user_message="记住我不吃辣")
+
+    notice = await orchestrator.record_assistant_reply(pending_reply)
+
+    assert notice == "记忆好像出了点小问题。"
+    assert recorded_errors[0]["stage"] == "long_term_memory_enqueue"
+    error_context = responder.error_notice_calls[0]["error_context"]
+    assert error_context == ErrorNoticeContext(
+        stage="long_term_memory_enqueue",
+        error_type="RuntimeError",
+        impact="刚刚这条消息可能没能写入长期记忆。",
+    )
+    assert "sk-secret" not in repr(error_context)
+    assert [item.content for item in await short_term.get_recent("qq_group:888888")] == [
+        "记住我不吃辣",
+        "好的",
+    ]
+
+
+async def test_error_notice_falls_back_when_llm_notice_generation_fails():
+    class NoticeFailingResponder(FakeResponder):
+        async def generate_error_notice(self, *, error_context, context):
+            raise RuntimeError("notice failed")
+
+    orchestrator = ChatOrchestrator(
+        short_term_memory=ShortTermMemoryService(),
+        long_term_memory=EnqueueFailingLongTermMemory(),
+        chat_agent=NoticeFailingResponder(),
+    )
+    context = build_group_conversation_context(
+        group_id=888888,
+        user_id=123456,
+        message_id="m1",
+        nickname="阿咳",
+        timestamp=123.0,
+    )
+    pending_reply = await orchestrator.handle_message(context=context, user_message="记住我不吃辣")
+
+    notice = await orchestrator.record_assistant_reply(pending_reply)
+
+    assert notice == "记忆好像出了点小问题，刚刚这条我可能没能记下来。"
 
 
 async def test_orchestrator_runs_web_search_fallback_after_llm_notice():
@@ -306,9 +463,12 @@ async def test_orchestrator_runs_web_search_fallback_after_llm_notice():
     assert responder.grounded_calls[0]["user_message"] == "DeepSeek 今天有什么新闻？"
     assert responder.grounded_calls[0]["search_query"] == "DeepSeek 最新消息"
     assert responder.grounded_calls[0]["search_sources"][0].raw_content == "原网页正文"
+    assert long_term.enqueued == []
+    await orchestrator.record_assistant_reply(pending_reply)
     assert long_term.enqueued[0].user_message == "DeepSeek 今天有什么新闻？"
     assert [item.content for item in await short_term.get_recent("qq_group:888888")] == [
-        "DeepSeek 今天有什么新闻？"
+        "DeepSeek 今天有什么新闻？",
+        "神奈基于搜索资料的回复",
     ]
 
 

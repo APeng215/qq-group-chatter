@@ -101,6 +101,29 @@ def test_context_from_group_event_uses_group_card_before_nickname(monkeypatch):
     assert context.nickname == "群名片"
 
 
+def test_context_from_group_event_marks_to_me_as_addressed_to_bot(monkeypatch):
+    class FakeGroupMessageEvent:
+        pass
+
+    class FakePrivateMessageEvent:
+        pass
+
+    monkeypatch.setattr("qq_group_chatter.plugins.chat.GroupMessageEvent", FakeGroupMessageEvent)
+    monkeypatch.setattr("qq_group_chatter.plugins.chat.PrivateMessageEvent", FakePrivateMessageEvent)
+    source_event = FakeGroupMessageEvent()
+    source_event.group_id = 888888
+    source_event.user_id = 123456
+    source_event.message_id = "m1"
+    source_event.time = 123.0
+    source_event.to_me = True
+    source_event.sender = SimpleNamespace(card="群名片", nickname="QQ昵称")
+
+    context = _context_from_event(source_event)
+
+    assert context is not None
+    assert context.is_addressed_to_bot is True
+
+
 def test_context_from_group_event_falls_back_to_nickname_when_card_is_blank(monkeypatch):
     class FakeGroupMessageEvent:
         pass
@@ -139,9 +162,11 @@ class FakeOrchestrator:
         self.recorded = []
         self.recorded_user_messages = []
         self.handle_calls = []
+        self.record_notice = None
 
-    async def record_assistant_reply(self, reply):
+    async def record_assistant_reply(self, reply, on_memory_error_notice=None):
         self.recorded.append(reply)
+        return self.record_notice
 
     async def record_user_message(self, *, context, user_message):
         self.recorded_user_messages.append(
@@ -226,6 +251,44 @@ async def test_send_reply_records_assistant_after_send_success():
 
     assert bot.sent == [{"event": source_event, "message": "ok"}]
     assert orchestrator.recorded == [reply]
+
+
+async def test_send_reply_sends_memory_error_notice_after_record_success():
+    bot = FakeBot()
+    orchestrator = FakeOrchestrator()
+    orchestrator.record_notice = "记忆好像出了点小问题。"
+    source_event = event(to_me=True)
+    reply = pending_reply()
+
+    await _send_reply_and_record(bot, source_event, reply, orchestrator)
+
+    assert [item["message"] for item in bot.sent] == [
+        "ok",
+        "记忆好像出了点小问题。",
+    ]
+    assert orchestrator.recorded == [reply]
+
+
+async def test_send_reply_logs_error_when_memory_notice_send_fails(monkeypatch):
+    class NoticeFailingBot(FakeBot):
+        async def send(self, event, message):
+            if message == "记忆好像出了点小问题。":
+                raise RuntimeError("notice send failed")
+            await super().send(event, message)
+
+    bot = NoticeFailingBot()
+    orchestrator = FakeOrchestrator()
+    orchestrator.record_notice = "记忆好像出了点小问题。"
+    recorded_errors = []
+    monkeypatch.setattr(
+        "qq_group_chatter.plugins.chat.record_error",
+        lambda stage, exc: recorded_errors.append({"stage": stage, "exc": exc}),
+    )
+
+    await _send_reply_and_record(bot, event(to_me=True), pending_reply(), orchestrator)
+
+    assert [item["message"] for item in bot.sent] == ["ok"]
+    assert recorded_errors[0]["stage"] == "memory_error_notice_send"
 
 
 async def test_send_reply_logs_error_and_does_not_record_when_send_fails(monkeypatch):

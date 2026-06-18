@@ -190,7 +190,9 @@ def create_default_orchestrator(
         else create_deepseek_chat_llm(trace_store=llm_trace_store)
     )
     return ChatOrchestrator(
-        short_term_memory=ShortTermMemoryService(),
+        short_term_memory=ShortTermMemoryService(
+            max_messages_per_conversation=_read_int("SHORT_TERM_MEMORY_MAX_MESSAGES", 300)
+        ),
         long_term_memory=create_default_long_term_memory_service(
             mem0_client=mem0_client,
             planner_llm=planner_llm,
@@ -219,7 +221,7 @@ def create_default_application(
         llm_trace_store=llm_trace_store,
     )
     orchestrator = ChatOrchestrator(
-        short_term_memory=ShortTermMemoryService(),
+        short_term_memory=create_default_short_term_memory_service(),
         long_term_memory=long_term_memory,
         chat_agent=ChatAgent(llm=resolved_chat_llm),
         web_search=web_search,
@@ -229,6 +231,15 @@ def create_default_application(
         long_term_memory=long_term_memory,
         web_search=web_search,
         llm_trace_store=llm_trace_store,
+    )
+
+
+def create_default_short_term_memory_service() -> ShortTermMemoryService:
+    return ShortTermMemoryService(
+        max_messages_per_conversation=_read_int("SHORT_TERM_MEMORY_MAX_MESSAGES", 300),
+        path=os.getenv("SHORT_TERM_MEMORY_PATH")
+        or _read_dotenv_key("SHORT_TERM_MEMORY_PATH")
+        or ".mem0/short-term-memory.jsonl",
     )
 
 

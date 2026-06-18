@@ -8,6 +8,7 @@ from qq_group_chatter.agent.chat_agent import ChatDecision, ChatReplyDecision, W
 from qq_group_chatter.models import (
     ChatMessage,
     ConversationContext,
+    ErrorNoticeContext,
     LongTermMemoryBundle,
     LongTermMemoryIngestionJob,
     PendingAssistantReply,
@@ -41,6 +42,7 @@ class ReplyAgent(Protocol):
         context: ConversationContext,
         short_term_messages: list[ChatMessage],
         long_term_memory,
+        memory_warning: ErrorNoticeContext | None = None,
     ) -> ChatDecision: ...
 
     async def generate_grounded_search_reply(
@@ -52,6 +54,13 @@ class ReplyAgent(Protocol):
         context: ConversationContext,
         short_term_messages: list[ChatMessage],
         long_term_memory,
+    ) -> str: ...
+
+    async def generate_error_notice(
+        self,
+        *,
+        error_context: ErrorNoticeContext,
+        context: ConversationContext,
     ) -> str: ...
 
 
@@ -101,28 +110,26 @@ class ChatOrchestrator:
                     context.conversation_id,
                     limit=self._short_term_limit,
                 )
+                memory_warning = None
                 try:
                     long_term_memory = await self._long_term_memory.search(content, context)
                 except Exception as exc:
                     record_error("long_term_memory_search", exc)
+                    memory_warning = ErrorNoticeContext(
+                        stage="long_term_memory_search",
+                        error_type=type(exc).__name__,
+                        impact="本轮回复可能没有用上长期记忆。",
+                    )
                     long_term_memory = LongTermMemoryBundle(
                         user_memories=[],
                         conversation_memories=[],
-                    )
-                else:
-                    await self._long_term_memory.enqueue_ingestion(
-                        LongTermMemoryIngestionJob(
-                            context=context,
-                            user_message=content,
-                            short_term_messages=short_term_messages,
-                            existing_memories=long_term_memory,
-                        )
                     )
                 decision = await self._chat_agent.generate_reply(
                     user_message=content,
                     context=context,
                     short_term_messages=short_term_messages,
                     long_term_memory=long_term_memory,
+                    memory_warning=memory_warning,
                 )
                 reply = await self._resolve_decision(
                     decision,
@@ -136,6 +143,10 @@ class ChatOrchestrator:
                     context=context,
                     content=reply,
                     timestamp=time(),
+                    user_message=content,
+                    short_term_messages=short_term_messages,
+                    long_term_memory=long_term_memory,
+                    memory_warning=memory_warning,
                 )
             except Exception as exc:
                 MESSAGES_TOTAL.labels(
@@ -206,7 +217,11 @@ class ChatOrchestrator:
             record_error("web_search", exc)
             return "搜索失败，稍后再试。"
 
-    async def record_assistant_reply(self, reply: PendingAssistantReply) -> None:
+    async def record_assistant_reply(
+        self,
+        reply: PendingAssistantReply,
+        on_memory_error_notice: Callable[[str], Awaitable[None] | None] | None = None,
+    ) -> str | None:
         await self._short_term_memory.add_message(
             ChatMessage(
                 conversation_id=reply.context.conversation_id,
@@ -222,7 +237,77 @@ class ChatOrchestrator:
             conversation_type=reply.context.conversation_type,
             result="replied",
         ).inc()
+        if reply.user_message is None:
+            return None
+        if reply.long_term_memory is None:
+            return None
+        try:
+            await self._long_term_memory.enqueue_ingestion(
+                LongTermMemoryIngestionJob(
+                    context=reply.context,
+                    user_message=reply.user_message,
+                    short_term_messages=reply.short_term_messages,
+                    existing_memories=reply.long_term_memory,
+                    assistant_reply=reply.content,
+                    on_error_notice=(
+                        None
+                        if on_memory_error_notice is None
+                        else lambda error_context: self._send_generated_error_notice(
+                            error_context,
+                            reply.context,
+                            on_memory_error_notice,
+                        )
+                    ),
+                )
+            )
+        except Exception as exc:
+            record_error("long_term_memory_enqueue", exc)
+            return await self._generate_error_notice(
+                ErrorNoticeContext(
+                    stage="long_term_memory_enqueue",
+                    error_type=type(exc).__name__,
+                    impact="刚刚这条消息可能没能写入长期记忆。",
+                ),
+                reply.context,
+            )
+        return None
+
+    async def _send_generated_error_notice(
+        self,
+        error_context: ErrorNoticeContext,
+        context: ConversationContext,
+        sender: Callable[[str], Awaitable[None] | None],
+    ) -> None:
+        notice = await self._generate_error_notice(error_context, context)
+        try:
+            result = sender(notice)
+            if _is_awaitable(result):
+                await result
+        except Exception as exc:
+            record_error("memory_error_notice_send", exc)
+
+    async def _generate_error_notice(
+        self,
+        error_context: ErrorNoticeContext,
+        context: ConversationContext,
+    ) -> str:
+        try:
+            notice = await self._chat_agent.generate_error_notice(
+                error_context=error_context,
+                context=context,
+            )
+        except Exception as exc:
+            record_error("memory_error_notice_generation", exc)
+            return _fallback_error_notice(error_context)
+        text = str(notice).strip()
+        return text or _fallback_error_notice(error_context)
 
 
 def _is_awaitable(value: Any) -> bool:
     return hasattr(value, "__await__")
+
+
+def _fallback_error_notice(error_context: ErrorNoticeContext) -> str:
+    if error_context.stage == "long_term_memory_search":
+        return "记忆好像出了点小问题，这次我可能没用上以前记住的内容。"
+    return "记忆好像出了点小问题，刚刚这条我可能没能记下来。"

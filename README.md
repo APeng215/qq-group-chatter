@@ -71,6 +71,10 @@ WEB_SEARCH_ENABLED=false
 # Mem0 本地 embedding 模型
 MEM0_FASTEMBED_MODEL=BAAI/bge-small-zh-v1.5
 
+# 短期记忆持久化；prompt 仍只读取最近 30 条
+SHORT_TERM_MEMORY_MAX_MESSAGES=300
+SHORT_TERM_MEMORY_PATH=.mem0/short-term-memory.jsonl
+
 # DeepSeek thinking 开关，默认开启；推荐 true / false，也兼容 enabled / disabled
 DEEPSEEK_THINKING=true
 
@@ -178,10 +182,11 @@ http://127.0.0.1:8080/api/llm-traces
 
 短期记忆：
 
-- 存在内存里。
-- 默认每个会话保留最近 30 条。
+- 存在内存里，并默认持久化到 `.mem0/short-term-memory.jsonl`。
+- 默认每个会话在磁盘和内存里保留最近 300 条。
 - prompt 默认读取最近 30 条。
-- 重启后丢失。
+- 重启后会从本地文件恢复最近的短期历史。
+- 可通过 `SHORT_TERM_MEMORY_MAX_MESSAGES` 和 `SHORT_TERM_MEMORY_PATH` 调整保留上限和路径。
 
 长期记忆：
 

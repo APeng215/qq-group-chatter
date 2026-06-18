@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from collections.abc import Awaitable, Callable
 from typing import Literal
 
 from qq_group_chatter.prompt_loader import load_prompt
@@ -31,6 +32,7 @@ class ConversationContext:
     message_id: str
     nickname: str | None
     timestamp: float
+    is_addressed_to_bot: bool = False
 
 
 @dataclass(frozen=True)
@@ -89,11 +91,20 @@ class LongTermMemoryBundle:
 
 
 @dataclass(frozen=True)
+class ErrorNoticeContext:
+    stage: str
+    error_type: str
+    impact: str
+
+
+@dataclass(frozen=True)
 class LongTermMemoryIngestionJob:
     context: ConversationContext
     user_message: str
     short_term_messages: list[ChatMessage] = field(default_factory=list)
     existing_memories: LongTermMemoryBundle | None = None
+    assistant_reply: str | None = None
+    on_error_notice: Callable[[ErrorNoticeContext], Awaitable[None] | None] | None = None
 
 
 @dataclass(frozen=True)
@@ -101,6 +112,10 @@ class PendingAssistantReply:
     context: ConversationContext
     content: str
     timestamp: float
+    user_message: str | None = None
+    short_term_messages: list[ChatMessage] = field(default_factory=list)
+    long_term_memory: LongTermMemoryBundle | None = None
+    memory_warning: ErrorNoticeContext | None = None
 
 
 def build_group_conversation_context(
@@ -110,6 +125,7 @@ def build_group_conversation_context(
     message_id: str | int,
     nickname: str | None,
     timestamp: float,
+    is_addressed_to_bot: bool = False,
 ) -> ConversationContext:
     group = str(group_id)
     return ConversationContext(
@@ -120,6 +136,7 @@ def build_group_conversation_context(
         message_id=str(message_id),
         nickname=nickname,
         timestamp=timestamp,
+        is_addressed_to_bot=is_addressed_to_bot,
     )
 
 
@@ -129,6 +146,7 @@ def build_private_conversation_context(
     message_id: str | int,
     nickname: str | None,
     timestamp: float,
+    is_addressed_to_bot: bool = True,
 ) -> ConversationContext:
     user = str(user_id)
     return ConversationContext(
@@ -139,6 +157,7 @@ def build_private_conversation_context(
         message_id=str(message_id),
         nickname=nickname,
         timestamp=timestamp,
+        is_addressed_to_bot=is_addressed_to_bot,
     )
 
 

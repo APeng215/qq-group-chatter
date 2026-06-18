@@ -1,5 +1,7 @@
 import subprocess
 import sys
+import uuid
+from pathlib import Path
 
 from qq_group_chatter.app import (
     ChatBotApplication,
@@ -8,6 +10,12 @@ from qq_group_chatter.app import (
     create_default_orchestrator,
 )
 from qq_group_chatter.models import build_private_conversation_context
+
+
+def local_tmp_path(name):
+    path = Path("tests/.tmp/app") / f"{name}-{uuid.uuid4().hex}.jsonl"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    return path
 
 
 async def test_default_orchestrator_can_reply_without_external_clients(monkeypatch):
@@ -88,6 +96,19 @@ def test_default_application_wires_shared_llm_trace_store(monkeypatch):
     assert application.llm_trace_store.max_records == 7
 
 
+def test_default_application_wires_persistent_short_term_memory(monkeypatch):
+    path = local_tmp_path("short-term-memory")
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "secret")
+    monkeypatch.setenv("SHORT_TERM_MEMORY_PATH", str(path))
+    monkeypatch.setattr("qq_group_chatter.app.create_default_mem0_client", lambda: NoopMem0Client())
+
+    application = create_default_application()
+    short_term = application.orchestrator._short_term_memory
+
+    assert short_term._max_messages_per_conversation == 300
+    assert short_term._path == path
+
+
 def test_default_orchestrator_does_not_create_web_search(monkeypatch):
     monkeypatch.setenv("DEEPSEEK_API_KEY", "secret")
     monkeypatch.setattr(
@@ -98,6 +119,14 @@ def test_default_orchestrator_does_not_create_web_search(monkeypatch):
     orchestrator = create_default_orchestrator(mem0_client=NoopMem0Client())
 
     assert orchestrator._web_search is None
+
+
+def test_default_orchestrator_uses_in_memory_short_term_memory(monkeypatch):
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "secret")
+
+    orchestrator = create_default_orchestrator(mem0_client=NoopMem0Client())
+
+    assert orchestrator._short_term_memory._path is None
 
 
 class FakeLongTermMemory:

@@ -2,9 +2,13 @@
 conversation_type: {conversation_type}
 {long_term_memory_section}
 
+记忆状态提示（如非“无”，请在回复中自然、简短地说明影响；不要暴露内部错误细节）：
+{memory_warning}
+
 短期会话上下文：
 {short_term_history}
 
 当前发言者：
 {current_speaker}
+当前消息指向：{addressed_to_bot}
 当前用户消息：{user_message}

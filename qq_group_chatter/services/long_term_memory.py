@@ -7,6 +7,7 @@ from typing import Any
 
 from qq_group_chatter.models import (
     ConversationContext,
+    ErrorNoticeContext,
     LongTermMemoryBundle,
     LongTermMemoryIngestionJob,
     LongTermMemoryOperation,
@@ -111,7 +112,14 @@ class LongTermMemoryService:
             try:
                 if job is None:
                     return
-                await self._process_job(job)
+                notice = await self._process_job(job)
+                if notice is not None and job.on_error_notice is not None:
+                    try:
+                        result = job.on_error_notice(notice)
+                        if hasattr(result, "__await__"):
+                            await result
+                    except Exception as exc:
+                        record_error("memory_error_notice", exc)
             except Exception as exc:
                 record_error("long_term_memory_worker", exc)
             finally:
@@ -141,7 +149,7 @@ class LongTermMemoryService:
             limit=1,
         )
 
-    async def _process_job(self, job: LongTermMemoryIngestionJob) -> None:
+    async def _process_job(self, job: LongTermMemoryIngestionJob) -> ErrorNoticeContext | None:
         existing_memories = job.existing_memories
         if existing_memories is None:
             existing_memories = await self.search(job.user_message, job.context)
@@ -153,12 +161,18 @@ class LongTermMemoryService:
                 conversation_memories=existing_memories.conversation_memories,
                 global_memories=existing_memories.global_memories,
                 short_term_messages=job.short_term_messages,
+                assistant_reply=job.assistant_reply,
             )
         except Exception as exc:
             record_error("long_term_memory_planner", exc)
-            return
+            return ErrorNoticeContext(
+                stage="long_term_memory_planner",
+                error_type=type(exc).__name__,
+                impact="刚刚这条消息可能没能写入长期记忆。",
+            )
 
         writable_count = 0
+        first_notice = None
         known_records = LongTermMemoryBundle(
             user_memories=list(existing_memories.user_memories),
             conversation_memories=list(existing_memories.conversation_memories),
@@ -166,22 +180,27 @@ class LongTermMemoryService:
         )
         for operation in planned_operations:
             if not self._is_valid_operation(operation):
-                await self._ingest_operation(operation, job, known_records)
+                notice = await self._ingest_operation(operation, job, known_records)
+                first_notice = first_notice or notice
                 continue
             if operation.action in {"add", "update", "delete"}:
                 if writable_count >= self._max_operations_per_message:
                     continue
                 writable_count += 1
             ingested = await self._ingest_operation(operation, job, known_records)
+            if isinstance(ingested, ErrorNoticeContext):
+                first_notice = first_notice or ingested
+                continue
             if ingested is not None:
                 self._remember_ingested_record(known_records, ingested)
+        return first_notice
 
     async def _ingest_operation(
         self,
         operation: LongTermMemoryOperation,
         job: LongTermMemoryIngestionJob,
         existing_memories: LongTermMemoryBundle,
-    ) -> LongTermMemoryRecord | None:
+    ) -> LongTermMemoryRecord | ErrorNoticeContext | None:
         if not self._is_valid_operation(operation):
             MEMORY_CANDIDATES_TOTAL.labels(
                 scope=operation.scope,
@@ -213,7 +232,9 @@ class LongTermMemoryService:
         if operation.action == "delete":
             target_record = _find_record(existing_records, operation.target_id)
             if target_record is not None and target_record.id is not None:
-                await self._delete_memory(target_record.id, operation.scope)
+                notice = await self._delete_memory(target_record.id, operation.scope)
+                if notice is not None:
+                    return notice
                 MEMORY_CANDIDATES_TOTAL.labels(
                     scope=operation.scope,
                     kind=operation.kind,
@@ -230,8 +251,12 @@ class LongTermMemoryService:
         if operation.action == "update":
             target_record = _find_record(existing_records, operation.target_id)
             if target_record is not None and target_record.id is not None:
-                await self._update_memory(target_record, operation.content, operation, job)
-                await self._prune_old_memories(target_id, operation.scope)
+                notice = await self._update_memory(target_record, operation.content, operation, job)
+                if notice is not None:
+                    return notice
+                prune_notice = await self._prune_old_memories(target_id, operation.scope)
+                if prune_notice is not None:
+                    return prune_notice
             else:
                 MEMORY_CANDIDATES_TOTAL.labels(
                     scope=operation.scope,
@@ -240,8 +265,12 @@ class LongTermMemoryService:
                 ).inc()
             return None
 
-        await self._add_memory(operation.content, target_id, operation, job)
-        await self._prune_old_memories(target_id, operation.scope)
+        notice = await self._add_memory(operation.content, target_id, operation, job)
+        if notice is not None:
+            return notice
+        prune_notice = await self._prune_old_memories(target_id, operation.scope)
+        if prune_notice is not None:
+            return prune_notice
         return LongTermMemoryRecord(id=None, content=operation.content, metadata={"scope": operation.scope})
 
     async def _add_memory(
@@ -250,7 +279,7 @@ class LongTermMemoryService:
         target_id: str,
         operation: LongTermMemoryOperation,
         job: LongTermMemoryIngestionJob,
-    ) -> None:
+    ) -> ErrorNoticeContext | None:
         metadata = _new_memory_metadata(operation, job)
         try:
             with observe_duration(
@@ -279,6 +308,8 @@ class LongTermMemoryService:
         except Exception as exc:
             MEM0_ADD_TOTAL.labels(scope=operation.scope, result="error").inc()
             record_error("mem0_add", exc)
+            return _visible_memory_error("mem0_add", exc)
+        return None
 
     async def _update_memory(
         self,
@@ -286,7 +317,7 @@ class LongTermMemoryService:
         content: str,
         operation: LongTermMemoryOperation,
         job: LongTermMemoryIngestionJob,
-    ) -> None:
+    ) -> ErrorNoticeContext | None:
         metadata = {
             **_memory_update_metadata(record.metadata),
             "source": "qq",
@@ -314,16 +345,20 @@ class LongTermMemoryService:
             ).inc()
         except Exception as exc:
             record_error("mem0_update", exc)
+            return _visible_memory_error("mem0_update", exc)
+        return None
 
-    async def _delete_memory(self, memory_id: str, scope: str) -> None:
+    async def _delete_memory(self, memory_id: str, scope: str) -> ErrorNoticeContext | None:
         try:
             await asyncio.to_thread(self._mem0.delete, memory_id)
         except Exception as exc:
             record_error("mem0_delete", exc)
+            return _visible_memory_error("mem0_delete", exc)
+        return None
 
-    async def _prune_old_memories(self, target_id: str, scope: str) -> None:
+    async def _prune_old_memories(self, target_id: str, scope: str) -> ErrorNoticeContext | None:
         if self._max_records_per_scope <= 0:
-            return
+            return None
         try:
             raw = await asyncio.to_thread(
                 self._mem0.get_all,
@@ -333,15 +368,18 @@ class LongTermMemoryService:
             records = normalize_mem0_records(raw)
         except Exception as exc:
             record_error("mem0_get_all", exc)
-            return
+            return _visible_memory_error("mem0_get_all", exc)
 
         overflow = len(records) - self._max_records_per_scope
         if overflow <= 0:
-            return
+            return None
         sorted_records = sorted(records, key=_record_created_at)
         for record in sorted_records[:overflow]:
             if record.id is not None:
-                await self._delete_memory(record.id, scope)
+                notice = await self._delete_memory(record.id, scope)
+                if notice is not None:
+                    return notice
+        return None
 
     async def _search_scope(
         self,
@@ -640,3 +678,11 @@ def _contains_sensitive_content(value: str) -> bool:
         return True
     digits = re.sub(r"[\s\-()（）]", "", value)
     return re.search(r"(?<!\d)1[3-9]\d{9}(?!\d)", digits) is not None
+
+
+def _visible_memory_error(stage: str, error: BaseException) -> ErrorNoticeContext:
+    return ErrorNoticeContext(
+        stage=stage,
+        error_type=type(error).__name__,
+        impact="刚刚这条消息可能没能写入长期记忆。",
+    )

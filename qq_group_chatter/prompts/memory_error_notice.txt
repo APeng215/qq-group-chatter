@@ -1,0 +1,15 @@
+conversation_type: {conversation_type}
+
+当前发言者：
+{current_speaker}
+
+记忆错误摘要：
+- stage: {error_stage}
+- error_type: {error_type}
+- impact: {error_impact}
+
+请用神奈的口吻生成一句简短提示，主动告诉用户记忆功能刚刚可能有问题。
+要求：
+- 不要提到技术实现、内部模块、堆栈、API key、token、traceback。
+- 不要道歉过度，不要解释排查步骤。
+- 只说对用户有用的影响。

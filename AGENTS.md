@@ -31,11 +31,11 @@
 
 联网搜索是普通聊天链路里的补充资料步骤：`ChatAgent` 先用 DeepSeek JSON Output 返回 `reply` 或 `web_search` 决策；如果是 `web_search`，`ChatOrchestrator` 先发送模型生成的 `notice`，再调用 `WebSearchService.search_sources()` 获取 Tavily 来源，最后回到 `ChatAgent.generate_grounded_search_reply()` 用神奈口吻回答。
 
-长期记忆 planner 只看用户消息；不要把 assistant 回复喂给长期记忆处理链路。
+长期记忆 planner 的事实来源仍然只看用户消息；assistant 回复只允许作为确认/拒绝/限定上下文，不能作为独立记忆事实来源。
 
 ## 记忆边界
 
-- 短期记忆：`qq_group_chatter/services/short_term_memory.py`，内存版，按 `conversation_id` 保存最近消息；默认每会话 30 条，prompt 默认读最近 30 条。重启丢失是当前 MVP 可接受行为。
+- 短期记忆：`qq_group_chatter/services/short_term_memory.py`，按 `conversation_id` 保存最近消息；默认每会话在内存和 `.mem0/short-term-memory.jsonl` 持久化文件里保留 300 条，prompt 默认只读最近 30 条。
 - 短期主键：
   - 群聊：`qq_group:{group_id}`
   - 私聊：`qq_private:{user_id}`
@@ -65,7 +65,7 @@
   - Mem0 embedding：本地 `fastembed`
   - 本地向量库：`.mem0/qdrant`
 - `.env` 本地使用且已 ignore；提交示例只改 `.env.example`。
-- `.mem0/` 是运行数据和本地长期记忆存储，可以保留用于加快下次运行或保留本地记忆；不要提交。
+- `.mem0/` 是运行数据、本地长期记忆存储和短期记忆持久化存储，可以保留用于加快下次运行或保留本地记忆；不要提交。
 
 ## 联网搜索
 

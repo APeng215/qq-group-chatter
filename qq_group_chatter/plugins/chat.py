@@ -69,6 +69,7 @@ def _context_from_event(event) -> ConversationContext | None:
             message_id=message_id,
             nickname=display_name,
             timestamp=timestamp,
+            is_addressed_to_bot=bool(getattr(event, "to_me", False)),
         )
     if PrivateMessageEvent is not object and isinstance(event, PrivateMessageEvent):
         return build_private_conversation_context(
@@ -76,6 +77,7 @@ def _context_from_event(event) -> ConversationContext | None:
             message_id=message_id,
             nickname=nickname,
             timestamp=timestamp,
+            is_addressed_to_bot=True,
         )
     return None
 
@@ -152,7 +154,18 @@ async def _send_reply_and_record(
     except Exception as exc:
         record_error("send_reply", exc)
         raise
-    await orchestrator.record_assistant_reply(reply)
+    async def on_memory_error_notice(notice_text: str) -> None:
+        await bot.send(event, notice_text)
+
+    notice = await orchestrator.record_assistant_reply(
+        reply,
+        on_memory_error_notice=on_memory_error_notice,
+    )
+    if notice:
+        try:
+            await bot.send(event, notice)
+        except Exception as exc:
+            record_error("memory_error_notice_send", exc)
 
 
 async def _handle_regular_chat(

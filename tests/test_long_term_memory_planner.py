@@ -163,6 +163,24 @@ async def test_planner_prompt_includes_short_term_context_as_auxiliary_history()
     assert "只辅助理解本轮用户消息" in llm.prompts[0]
 
 
+async def test_planner_prompt_includes_assistant_reply_only_as_confirmation_context():
+    llm = FakePlannerLLM({"operations": []})
+    planner = LongTermMemoryPlanner(llm=llm)
+
+    await planner.plan(
+        user_message="以后说话可爱一点",
+        assistant_reply="好呀，那我以后会更可爱一点跟你说话。",
+        context=context(),
+        user_memories=[],
+        conversation_memories=[],
+    )
+
+    prompt = llm.prompts[0]
+    assert "本轮神奈回复（仅用于判断用户请求是否被接受、拒绝、部分接受或限定；不能作为独立事实来源）" in prompt
+    assert "好呀，那我以后会更可爱一点跟你说话。" in prompt
+    assert "不要仅因为神奈这样回复就创建事实记忆" in prompt
+
+
 async def test_planner_skips_invalid_operations_and_invalid_update_target():
     planner = LongTermMemoryPlanner(
         llm=FakePlannerLLM(

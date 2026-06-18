@@ -8,6 +8,7 @@ from typing import Any
 from qq_group_chatter.models import (
     ChatMessage,
     ConversationContext,
+    ErrorNoticeContext,
     LongTermMemoryBundle,
 )
 from qq_group_chatter.observability import (
@@ -42,6 +43,7 @@ CHAT_SEARCH_GROUNDED_SYSTEM_PROMPT = "\n".join(
         ),
     )
 )
+ERROR_NOTICE_PROMPT_TEMPLATE = load_prompt("memory_error_notice.txt")
 
 
 @dataclass(frozen=True)
@@ -115,12 +117,14 @@ class ChatAgent:
         context: ConversationContext,
         short_term_messages: list[ChatMessage],
         long_term_memory: LongTermMemoryBundle,
+        memory_warning: ErrorNoticeContext | None = None,
     ) -> ChatDecision:
         prompt = self._build_prompt(
             user_message=user_message,
             context=context,
             short_term_messages=short_term_messages,
             long_term_memory=long_term_memory,
+            memory_warning=memory_warning,
         )
         if self._llm is None:
             return ChatReplyDecision(content="\u6211\u73b0\u5728\u8fd8\u6ca1\u6709\u914d\u7f6e\u804a\u5929\u6a21\u578b\u3002")
@@ -185,6 +189,40 @@ class ChatAgent:
                 },
             )
         return self._content(raw)
+
+    async def generate_error_notice(
+        self,
+        *,
+        error_context: ErrorNoticeContext,
+        context: ConversationContext,
+    ) -> str:
+        if self._llm is None:
+            return _fallback_error_notice(error_context)
+        prompt = ERROR_NOTICE_PROMPT_TEMPLATE.format(
+            conversation_type=context.conversation_type,
+            current_speaker=_format_current_speaker(context),
+            error_stage=error_context.stage,
+            error_type=error_context.error_type,
+            error_impact=error_context.impact,
+        )
+        with observe_duration(
+            metric=LLM_LATENCY_SECONDS,
+            labels={"component": "chat_agent"},
+            log_name="llm_call",
+            log_fields={
+                "component": "chat_agent",
+                **conversation_log_fields(context),
+            },
+        ):
+            raw = await self._call_llm(
+                prompt,
+                system_prompt=CHAT_AGENT_SYSTEM_PROMPT,
+                trace_context={
+                    "component": "chat_agent",
+                    "operation": "memory_error_notice",
+                },
+            )
+        return self._content(raw).strip() or _fallback_error_notice(error_context)
 
     async def _call_llm(
         self,
@@ -264,14 +302,17 @@ class ChatAgent:
         context: ConversationContext,
         short_term_messages: list[ChatMessage],
         long_term_memory: LongTermMemoryBundle,
+        memory_warning: ErrorNoticeContext | None = None,
     ) -> str:
         history = _format_short_term_history(short_term_messages)
         return CHAT_AGENT_PROMPT_TEMPLATE.format(
             current_time=current_time_text(),
             conversation_type=context.conversation_type,
             long_term_memory_section=long_term_memory.as_prompt_section(context),
+            memory_warning=_format_memory_warning(memory_warning),
             short_term_history=history or "\u65e0",
             current_speaker=_format_current_speaker(context),
+            addressed_to_bot=_format_addressed_to_bot(context),
             user_message=_format_current_user_message(context, user_message),
         )
 
@@ -292,6 +333,7 @@ class ChatAgent:
             long_term_memory_section=long_term_memory.as_prompt_section(context),
             short_term_history=history or "\u65e0",
             current_speaker=_format_current_speaker(context),
+            addressed_to_bot=_format_addressed_to_bot(context),
             user_message=_format_current_user_message(context, user_message),
             search_query=search_query,
             search_sources=_format_search_sources(search_sources),
@@ -319,6 +361,12 @@ def _format_current_speaker(context: ConversationContext) -> str:
     return f"- QQ号：{context.user_id}\n- 昵称：{_display_nickname(context.nickname)}"
 
 
+def _format_addressed_to_bot(context: ConversationContext) -> str:
+    if context.is_addressed_to_bot:
+        return "已明确指向神奈"
+    return "未明确指向神奈，仅作为会话背景"
+
+
 def _format_current_user_message(context: ConversationContext, user_message: str) -> str:
     return f"{_format_user_identity(context.user_id, context.nickname)} {user_message}"
 
@@ -338,6 +386,23 @@ def _display_nickname(nickname: str | None) -> str:
         return "未设置"
     text = str(nickname).strip()
     return text or "未设置"
+
+
+def _format_memory_warning(memory_warning: ErrorNoticeContext | None) -> str:
+    if memory_warning is None:
+        return "无"
+    return (
+        f"- stage: {memory_warning.stage}\n"
+        f"- error_type: {memory_warning.error_type}\n"
+        f"- impact: {memory_warning.impact}\n"
+        "- 需要用神奈的口吻自然提醒，不要暴露内部堆栈、密钥或实现细节。"
+    )
+
+
+def _fallback_error_notice(error_context: ErrorNoticeContext) -> str:
+    if error_context.stage == "long_term_memory_search":
+        return "记忆好像出了点小问题，这次我可能没用上以前记住的内容。"
+    return "记忆好像出了点小问题，刚刚这条我可能没能记下来。"
 
 
 def _format_search_sources(search_sources: list[Any]) -> str:
