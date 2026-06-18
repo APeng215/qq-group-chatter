@@ -57,6 +57,7 @@ def _context_from_event(event) -> ConversationContext | None:
 
     timestamp = float(getattr(event, "time", time()))
     message_id = str(getattr(event, "message_id", ""))
+    reply_to_message_id = _reply_to_message_id_from_event(event)
     user_id = str(getattr(event, "user_id", ""))
     sender = getattr(event, "sender", None)
     nickname = _sender_text(sender, "nickname")
@@ -70,6 +71,7 @@ def _context_from_event(event) -> ConversationContext | None:
             nickname=display_name,
             timestamp=timestamp,
             is_addressed_to_bot=bool(getattr(event, "to_me", False)),
+            reply_to_message_id=reply_to_message_id,
         )
     if PrivateMessageEvent is not object and isinstance(event, PrivateMessageEvent):
         return build_private_conversation_context(
@@ -78,6 +80,7 @@ def _context_from_event(event) -> ConversationContext | None:
             nickname=nickname,
             timestamp=timestamp,
             is_addressed_to_bot=True,
+            reply_to_message_id=reply_to_message_id,
         )
     return None
 
@@ -111,6 +114,23 @@ def _message_text_from_event(event) -> str:
     if parts:
         return " ".join(parts)
     return str(event.get_plaintext()).strip()
+
+
+def _reply_to_message_id_from_event(event) -> str | None:
+    segments = getattr(event, "message", None)
+    if segments is None:
+        return None
+    for segment in segments:
+        if _segment_value(segment, "type") != "reply":
+            continue
+        data = _segment_value(segment, "data") or {}
+        message_id = _segment_value(data, "id")
+        if message_id is None:
+            continue
+        text = str(message_id).strip()
+        if text:
+            return text
+    return None
 
 
 def _segment_value(segment, field: str):

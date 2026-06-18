@@ -95,6 +95,173 @@ def test_chat_agent_prompt_marks_message_addressed_to_bot():
     assert "当前消息指向：已明确指向神奈" in prompt
 
 
+def test_chat_agent_prompt_omits_memory_warning_block_when_memory_is_ok():
+    agent = ChatAgent()
+    context = build_group_conversation_context(
+        group_id=888888,
+        user_id=123456,
+        message_id="m1",
+        nickname="阿咳",
+        timestamp=123.0,
+    )
+
+    prompt = agent._build_prompt(
+        user_message="你好",
+        context=context,
+        short_term_messages=[],
+        long_term_memory=LongTermMemoryBundle(user_memories=[], conversation_memories=[]),
+    )
+
+    assert "记忆状态提示" not in prompt
+    assert "如非“无”" not in prompt
+
+
+def test_chat_agent_prompt_omits_quote_block_without_reply():
+    agent = ChatAgent()
+    context = build_group_conversation_context(
+        group_id=888888,
+        user_id=123456,
+        message_id="m1",
+        nickname="阿咳",
+        timestamp=123.0,
+    )
+
+    prompt = agent._build_prompt(
+        user_message="你好",
+        context=context,
+        short_term_messages=[],
+        long_term_memory=LongTermMemoryBundle(user_memories=[], conversation_memories=[]),
+    )
+
+    assert "当前消息引用" not in prompt
+    assert "引用消息 ID" not in prompt
+    assert (
+        "当前消息指向：未明确指向神奈，仅作为会话背景\n"
+        "当前用户消息：[QQ:123456 昵称:阿咳] 你好"
+    ) in prompt
+
+
+def test_chat_agent_prompt_filters_current_message_from_short_term_history():
+    agent = ChatAgent()
+    context = build_group_conversation_context(
+        group_id=888888,
+        user_id=123456,
+        message_id="m2",
+        nickname="阿咳",
+        timestamp=123.0,
+    )
+
+    prompt = agent._build_prompt(
+        user_message="当前问题",
+        context=context,
+        short_term_messages=[
+            ChatMessage(
+                conversation_id=context.conversation_id,
+                role="user",
+                content="历史问题",
+                user_id="123456",
+                nickname="阿咳",
+                message_id="m1",
+                timestamp=121.0,
+            ),
+            ChatMessage(
+                conversation_id=context.conversation_id,
+                role="user",
+                content="当前问题",
+                user_id="123456",
+                nickname="阿咳",
+                message_id="m2",
+                timestamp=123.0,
+            ),
+        ],
+        long_term_memory=LongTermMemoryBundle(user_memories=[], conversation_memories=[]),
+    )
+
+    assert "历史问题" in prompt
+    assert prompt.count("当前问题") == 1
+    assert "当前用户消息：[QQ:123456 昵称:阿咳] 当前问题" in prompt
+
+
+def test_chat_agent_prompt_has_no_excess_blank_lines_when_optional_blocks_are_empty():
+    agent = ChatAgent()
+    context = build_group_conversation_context(
+        group_id=888888,
+        user_id=123456,
+        message_id="m1",
+        nickname="阿咳",
+        timestamp=123.0,
+    )
+
+    prompt = agent._build_prompt(
+        user_message="你好",
+        context=context,
+        short_term_messages=[],
+        long_term_memory=LongTermMemoryBundle(user_memories=[], conversation_memories=[]),
+    )
+
+    assert "\n\n\n" not in prompt
+
+
+def test_chat_agent_prompt_includes_memory_warning_block_when_memory_has_error():
+    agent = ChatAgent()
+    context = build_group_conversation_context(
+        group_id=888888,
+        user_id=123456,
+        message_id="m1",
+        nickname="阿咳",
+        timestamp=123.0,
+    )
+
+    prompt = agent._build_prompt(
+        user_message="你好",
+        context=context,
+        short_term_messages=[],
+        long_term_memory=LongTermMemoryBundle(user_memories=[], conversation_memories=[]),
+        memory_warning=ErrorNoticeContext(
+            stage="long_term_memory_search",
+            error_type="RuntimeError",
+            impact="本轮回复可能没有用上长期记忆。",
+        ),
+    )
+
+    assert "记忆状态提示（请在回复中自然、简短地说明影响；不要暴露内部错误细节）：" in prompt
+    assert "- stage: long_term_memory_search" in prompt
+    assert "- impact: 本轮回复可能没有用上长期记忆。" in prompt
+
+
+def test_chat_agent_prompt_includes_quoted_message_when_available():
+    agent = ChatAgent()
+    context = build_group_conversation_context(
+        group_id=888888,
+        user_id=123456,
+        message_id="m2",
+        nickname="阿咳",
+        timestamp=123.0,
+        reply_to_message_id="m1",
+    )
+
+    prompt = agent._build_prompt(
+        user_message="就是这个",
+        context=context,
+        short_term_messages=[
+            ChatMessage(
+                conversation_id=context.conversation_id,
+                role="user",
+                content="原来的问题",
+                user_id="654321",
+                nickname="小明",
+                message_id="m1",
+                timestamp=122.0,
+            )
+        ],
+        long_term_memory=LongTermMemoryBundle(user_memories=[], conversation_memories=[]),
+    )
+
+    assert "当前消息引用：" in prompt
+    assert "引用消息 ID：m1" in prompt
+    assert "[QQ:654321 昵称:小明] 原来的问题" in prompt
+
+
 class TraceContextLLM:
     def __init__(self, response):
         self.response = response
@@ -299,7 +466,7 @@ def test_chat_agent_prompt_distinguishes_same_nickname_by_qq_number():
     context = build_group_conversation_context(
         group_id=888888,
         user_id=333333,
-        message_id="m3",
+        message_id="m4",
         nickname="人",
         timestamp=123.0,
     )

@@ -30,6 +30,7 @@ class ConversationContext:
     user_id: str
     group_id: str | None
     message_id: str
+    reply_to_message_id: str | None
     nickname: str | None
     timestamp: float
     is_addressed_to_bot: bool = False
@@ -70,24 +71,29 @@ class LongTermMemoryBundle:
     global_memories: list[LongTermMemoryRecord] = field(default_factory=list)
 
     def as_prompt_section(self, context: ConversationContext) -> str:
-        user_lines = "\n".join(
-            _format_memory_record(record) for record in self.user_memories
-        ) or "- 无"
-        conversation_lines = (
-            "\n".join(_format_memory_record(record) for record in self.conversation_memories)
-            or "- 无"
-        )
-        global_lines = (
-            "\n".join(_format_global_memory_record(record) for record in self.global_memories)
-            or "- 无"
-        )
-        return LONG_TERM_MEMORY_SECTION_TEMPLATE.format(
-            current_user_qq=context.user_id,
-            current_user_nickname=_display_nickname(context.nickname),
-            user_memory_lines=user_lines,
-            conversation_memory_lines=conversation_lines,
-            global_memory_lines=global_lines,
-        )
+        sections: list[str] = []
+        if self.user_memories:
+            sections.append(
+                "相关个人长期记忆"
+                f"（当前发言者 QQ号：{context.user_id}，昵称：{_display_nickname(context.nickname)}）：\n"
+                + "\n".join(_format_memory_record(record) for record in self.user_memories)
+            )
+        if self.conversation_memories:
+            sections.append(
+                "相关会话长期记忆：\n"
+                + "\n".join(
+                    _format_memory_record(record) for record in self.conversation_memories
+                )
+            )
+        if self.global_memories:
+            sections.append(
+                "当前 conversation 内相关长期记忆"
+                "（只作为当前会话背景；不要把其他人的信息误当成当前发言者自己的信息）：\n"
+                + "\n".join(
+                    _format_global_memory_record(record) for record in self.global_memories
+                )
+            )
+        return "\n\n".join(sections) if sections else "长期记忆：无"
 
 
 @dataclass(frozen=True)
@@ -126,6 +132,7 @@ def build_group_conversation_context(
     nickname: str | None,
     timestamp: float,
     is_addressed_to_bot: bool = False,
+    reply_to_message_id: str | int | None = None,
 ) -> ConversationContext:
     group = str(group_id)
     return ConversationContext(
@@ -134,6 +141,7 @@ def build_group_conversation_context(
         user_id=str(user_id),
         group_id=group,
         message_id=str(message_id),
+        reply_to_message_id=_optional_text(reply_to_message_id),
         nickname=nickname,
         timestamp=timestamp,
         is_addressed_to_bot=is_addressed_to_bot,
@@ -147,6 +155,7 @@ def build_private_conversation_context(
     nickname: str | None,
     timestamp: float,
     is_addressed_to_bot: bool = True,
+    reply_to_message_id: str | int | None = None,
 ) -> ConversationContext:
     user = str(user_id)
     return ConversationContext(
@@ -155,6 +164,7 @@ def build_private_conversation_context(
         user_id=user,
         group_id=None,
         message_id=str(message_id),
+        reply_to_message_id=_optional_text(reply_to_message_id),
         nickname=nickname,
         timestamp=timestamp,
         is_addressed_to_bot=is_addressed_to_bot,
@@ -193,6 +203,13 @@ def _metadata_text(value: object) -> str:
         return "未知"
     text = str(value).strip()
     return text or "未知"
+
+
+def _optional_text(value: object | None) -> str | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None
 
 
 def _display_nickname(nickname: str | None) -> str:

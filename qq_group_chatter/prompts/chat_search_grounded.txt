@@ -8,6 +8,7 @@ conversation_type: {conversation_type}
 当前发言者：
 {current_speaker}
 当前消息指向：{addressed_to_bot}
+{quoted_message}
 当前用户消息：{user_message}
 
 搜索查询词：{search_query}

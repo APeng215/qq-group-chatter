@@ -79,6 +79,43 @@ def test_message_text_from_event_keeps_text_and_image_placeholder():
     assert _message_text_from_event(source_event) == "看这个 [图片]"
 
 
+def test_message_text_from_event_ignores_reply_segment():
+    source_event = event(
+        message=[
+            {"type": "reply", "data": {"id": "m0"}},
+            {"type": "text", "data": {"text": "就是这个"}},
+        ]
+    )
+
+    assert _message_text_from_event(source_event) == "就是这个"
+
+
+def test_context_from_group_event_captures_reply_message_id(monkeypatch):
+    class FakeGroupMessageEvent:
+        pass
+
+    class FakePrivateMessageEvent:
+        pass
+
+    monkeypatch.setattr("qq_group_chatter.plugins.chat.GroupMessageEvent", FakeGroupMessageEvent)
+    monkeypatch.setattr("qq_group_chatter.plugins.chat.PrivateMessageEvent", FakePrivateMessageEvent)
+    source_event = FakeGroupMessageEvent()
+    source_event.group_id = 888888
+    source_event.user_id = 123456
+    source_event.message_id = "m1"
+    source_event.time = 123.0
+    source_event.sender = SimpleNamespace(card="群名片", nickname="QQ昵称")
+    source_event.message = [
+        {"type": "reply", "data": {"id": "m0"}},
+        {"type": "text", "data": {"text": "就是这个"}},
+    ]
+
+    context = _context_from_event(source_event)
+
+    assert context is not None
+    assert context.reply_to_message_id == "m0"
+
+
 def test_context_from_group_event_uses_group_card_before_nickname(monkeypatch):
     class FakeGroupMessageEvent:
         pass

@@ -34,6 +34,7 @@ def test_builds_group_conversation_context():
         user_id="123456",
         group_id="888888",
         message_id="m1",
+        reply_to_message_id=None,
         nickname="阿咳",
         timestamp=123.0,
     )
@@ -54,6 +55,19 @@ def test_builds_private_conversation_context():
     assert context.group_id is None
     assert user_memory_id(context) == "qq_user:qq_private:123456:123456"
     assert conversation_memory_id(context) == "qq_conversation:qq_private:123456"
+
+
+def test_group_conversation_context_keeps_reply_message_id():
+    context = build_group_conversation_context(
+        group_id=888888,
+        user_id=123456,
+        message_id="m2",
+        nickname="阿咳",
+        timestamp=123.0,
+        reply_to_message_id="m1",
+    )
+
+    assert context.reply_to_message_id == "m1"
 
 
 def test_user_memory_id_is_isolated_by_conversation():
@@ -88,11 +102,22 @@ def test_long_term_memory_bundle_renders_readable_prompt_section():
 
     prompt_section = bundle.as_prompt_section(prompt_context())
 
-    assert "相关个人长期记忆（当前发言者 QQ号：123456，昵称：阿咳）：\n- 无" in prompt_section
     assert "相关会话长期记忆：\n- 默认中文" in prompt_section
-    assert "当前 conversation 内相关长期记忆" in prompt_section
-    assert prompt_section.endswith("- 无")
+    assert "相关个人长期记忆" not in prompt_section
+    assert "当前 conversation 内相关长期记忆" not in prompt_section
     assert "不应出现在 prompt" not in prompt_section
+
+
+def test_long_term_memory_bundle_renders_compact_empty_section():
+    bundle = LongTermMemoryBundle(
+        user_memories=[],
+        conversation_memories=[],
+        global_memories=[],
+    )
+
+    prompt_section = bundle.as_prompt_section(prompt_context())
+
+    assert prompt_section == "长期记忆：无"
 
 
 def test_long_term_memory_bundle_renders_global_memories_with_source_metadata():

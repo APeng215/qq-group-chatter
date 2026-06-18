@@ -304,8 +304,9 @@ class ChatAgent:
         long_term_memory: LongTermMemoryBundle,
         memory_warning: ErrorNoticeContext | None = None,
     ) -> str:
-        history = _format_short_term_history(short_term_messages)
-        return CHAT_AGENT_PROMPT_TEMPLATE.format(
+        history_messages = _history_without_current_message(short_term_messages, context)
+        history = _format_short_term_history(history_messages)
+        prompt = CHAT_AGENT_PROMPT_TEMPLATE.format(
             current_time=current_time_text(),
             conversation_type=context.conversation_type,
             long_term_memory_section=long_term_memory.as_prompt_section(context),
@@ -313,8 +314,10 @@ class ChatAgent:
             short_term_history=history or "\u65e0",
             current_speaker=_format_current_speaker(context),
             addressed_to_bot=_format_addressed_to_bot(context),
+            quoted_message=_format_quoted_message(context, short_term_messages),
             user_message=_format_current_user_message(context, user_message),
         )
+        return _compact_blank_lines(prompt)
 
     def _build_grounded_search_prompt(
         self,
@@ -326,18 +329,21 @@ class ChatAgent:
         short_term_messages: list[ChatMessage],
         long_term_memory: LongTermMemoryBundle,
     ) -> str:
-        history = _format_short_term_history(short_term_messages)
-        return CHAT_SEARCH_GROUNDED_PROMPT_TEMPLATE.format(
+        history_messages = _history_without_current_message(short_term_messages, context)
+        history = _format_short_term_history(history_messages)
+        prompt = CHAT_SEARCH_GROUNDED_PROMPT_TEMPLATE.format(
             current_time=current_time_text(),
             conversation_type=context.conversation_type,
             long_term_memory_section=long_term_memory.as_prompt_section(context),
             short_term_history=history or "\u65e0",
             current_speaker=_format_current_speaker(context),
             addressed_to_bot=_format_addressed_to_bot(context),
+            quoted_message=_format_quoted_message(context, short_term_messages),
             user_message=_format_current_user_message(context, user_message),
             search_query=search_query,
             search_sources=_format_search_sources(search_sources),
         )
+        return _compact_blank_lines(prompt)
 
     def _content(self, raw: Any) -> str:
         if hasattr(raw, "content"):
@@ -357,6 +363,13 @@ def _format_short_term_history(messages: list[ChatMessage]) -> str:
     return "\n".join(lines)
 
 
+def _history_without_current_message(
+    messages: list[ChatMessage],
+    context: ConversationContext,
+) -> list[ChatMessage]:
+    return [message for message in messages if message.message_id != context.message_id]
+
+
 def _format_current_speaker(context: ConversationContext) -> str:
     return f"- QQ号：{context.user_id}\n- 昵称：{_display_nickname(context.nickname)}"
 
@@ -365,6 +378,37 @@ def _format_addressed_to_bot(context: ConversationContext) -> str:
     if context.is_addressed_to_bot:
         return "已明确指向神奈"
     return "未明确指向神奈，仅作为会话背景"
+
+
+def _format_quoted_message(
+    context: ConversationContext,
+    short_term_messages: list[ChatMessage],
+) -> str:
+    if not context.reply_to_message_id:
+        return ""
+    quoted = _find_message_by_id(short_term_messages, context.reply_to_message_id)
+    if quoted is None:
+        return (
+            "当前消息引用：\n"
+            f"- 引用消息 ID：{context.reply_to_message_id}\n"
+            "- 引用原文：短期上下文中未找到"
+        )
+    speaker = _format_message_speaker(quoted)
+    return (
+        "当前消息引用：\n"
+        f"- 引用消息 ID：{context.reply_to_message_id}\n"
+        f"- 引用原文：{speaker} {quoted.content}"
+    )
+
+
+def _find_message_by_id(
+    messages: list[ChatMessage],
+    message_id: str,
+) -> ChatMessage | None:
+    for message in reversed(messages):
+        if message.message_id == message_id:
+            return message
+    return None
 
 
 def _format_current_user_message(context: ConversationContext, user_message: str) -> str:
@@ -390,13 +434,29 @@ def _display_nickname(nickname: str | None) -> str:
 
 def _format_memory_warning(memory_warning: ErrorNoticeContext | None) -> str:
     if memory_warning is None:
-        return "无"
+        return ""
     return (
+        "记忆状态提示（请在回复中自然、简短地说明影响；不要暴露内部错误细节）：\n"
         f"- stage: {memory_warning.stage}\n"
         f"- error_type: {memory_warning.error_type}\n"
         f"- impact: {memory_warning.impact}\n"
         "- 需要用神奈的口吻自然提醒，不要暴露内部堆栈、密钥或实现细节。"
     )
+
+
+def _compact_blank_lines(value: str) -> str:
+    lines = value.splitlines()
+    compacted: list[str] = []
+    previous_blank = False
+    for line in lines:
+        is_blank = not line.strip()
+        if is_blank and compacted and compacted[-1].startswith("当前消息指向："):
+            continue
+        if is_blank and previous_blank:
+            continue
+        compacted.append(line)
+        previous_blank = is_blank
+    return "\n".join(compacted).strip()
 
 
 def _fallback_error_notice(error_context: ErrorNoticeContext) -> str:
