@@ -96,6 +96,7 @@ def test_setup_memory_dashboard_registers_routes_by_default(monkeypatch):
 
     setup_memory_dashboard(driver, FakeApplication())
 
+    assert driver.routes["/console"].method == "GET"
     assert driver.routes["/memory"].method == "GET"
     assert driver.routes["/api/memory"].method == "GET"
     assert driver.routes["/api/llm-traces"].method == "GET"
@@ -117,6 +118,7 @@ def test_setup_memory_dashboard_registers_routes_when_enabled(monkeypatch):
 
     setup_memory_dashboard(driver, FakeApplication())
 
+    assert driver.routes["/console"].method == "GET"
     assert driver.routes["/memory"].method == "GET"
     assert driver.routes["/api/memory"].method == "GET"
     assert driver.routes["/api/llm-traces"].method == "GET"
@@ -144,7 +146,9 @@ def test_memory_dashboard_html_contains_bootstrap_snapshot():
 
     assert "<!doctype html>" in html
     assert "window.__MEMORY_SNAPSHOT__" in html
-    assert "长期记忆" in html
+    assert "<title>运行控制台</title>" in html
+    assert "<h1>运行控制台</h1>" in html
+    assert "记忆库" in html
 
 
 async def test_memory_dashboard_handlers_return_html_and_json_responses():
@@ -153,6 +157,7 @@ async def test_memory_dashboard_handlers_return_html_and_json_responses():
 
     assert html_response.status_code == 200
     assert "text/html" in html_response.headers["content-type"]
+    assert "运行控制台" in html_response.content
     assert "长期记忆" in html_response.content
     assert api_response.status_code == 200
     assert "application/json" in api_response.headers["content-type"]
@@ -206,6 +211,13 @@ def test_memory_dashboard_html_renders_trace_reasoning_content():
     assert "${renderTraceReasoning(item)}" in html
 
 
+def test_memory_dashboard_html_labels_average_duration_as_chat_only():
+    html = memory_dashboard_html({"summary": {"total": 0}, "memories": [], "errors": []})
+
+    assert "聊天平均耗时" in html
+    assert '<span class="muted">平均耗时 ms</span>' not in html
+
+
 def test_memory_dashboard_html_indents_llm_trace_text_blocks():
     html = memory_dashboard_html({"summary": {"total": 0}, "memories": [], "errors": []})
 
@@ -220,6 +232,39 @@ def test_memory_dashboard_html_does_not_poll_llm_traces():
 
     assert "setInterval" not in html
     assert "traceRefreshEl.addEventListener" in html
+
+
+def test_memory_dashboard_html_adds_trace_filter_status_and_quick_filters():
+    html = memory_dashboard_html({"summary": {"total": 0}, "memories": [], "errors": []})
+
+    assert 'id="trace-filter-status"' in html
+    assert 'id="trace-component-chips"' in html
+    assert "function renderTraceFilterStatus" in html
+    assert "function renderTraceComponentChips" in html
+    assert "data-component-filter" in html
+    assert "traceFilterStatusEl" in html
+
+
+def test_memory_dashboard_html_marks_trace_status_and_duration():
+    html = memory_dashboard_html({"summary": {"total": 0}, "memories": [], "errors": []})
+
+    assert "function traceStatusClass" in html
+    assert "function durationSeverityClass" in html
+    assert "function formatDurationMs" in html
+    assert 'class="badge ${traceStatusClass(item.status)}"' in html
+    assert 'class="duration-pill ${durationSeverityClass(item.duration_ms)}"' in html
+
+
+def test_memory_dashboard_html_adds_trace_copy_actions():
+    html = memory_dashboard_html({"summary": {"total": 0}, "memories": [], "errors": []})
+
+    assert "function copyTraceText" in html
+    assert "function traceCopyPayload" in html
+    assert "navigator.clipboard.writeText" in html
+    assert "data-copy-trace-id" in html
+    assert "复制 ID" in html
+    assert "复制响应" in html
+    assert "traceListEl.addEventListener" in html
 
 
 async def test_llm_trace_dashboard_api_returns_snapshot_and_clear_response():

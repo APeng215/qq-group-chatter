@@ -83,7 +83,7 @@
 - 可观测性在 `qq_group_chatter/observability.py`。
 - 保持结构化日志和 Prometheus 风格指标：消息处理数量/结果、端到端回复耗时、chat agent / memory planner LLM 耗时、Mem0 search/add 耗时、长期记忆队列长度、候选 add/skip/error、duplicate skip、stage + error_type 错误计数。
 - 不要在日志中输出原始 QQ 号、API key 或敏感消息内容。
-- LLM 调用 trace 在 `qq_group_chatter/llm_tracing.py`，默认写入 `logs/llm-traces.jsonl`，用于 `/memory` 里的 LLM 控制台。
+- LLM 调用 trace 在 `qq_group_chatter/llm_tracing.py`，默认写入 `logs/llm-traces.jsonl`，用于 `/console` 运行控制台里的 LLM 控制台；`/memory` 保留为兼容入口。
 - LLM trace 是本地调试数据，不是普通日志；它会保存原始 messages 和 response，可能包含 QQ 号、昵称、聊天正文、长期记忆片段和搜索正文片段。不要提交、公开或转发该文件。
 
 ## 测试和验证

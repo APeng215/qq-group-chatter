@@ -53,6 +53,66 @@ def test_trace_store_groups_events_and_summarizes_statuses():
     assert trace["usage"] == {"total_tokens": 12}
 
 
+def test_trace_store_average_duration_only_uses_recent_chat_agent_calls():
+    tmp_path = trace_dir("chat-average")
+    store = LLMTraceStore(path=tmp_path / "traces.jsonl", max_records=10)
+    chat_first = store.record_start(
+        component="chat_agent",
+        operation="decision",
+        model="deepseek-v4-pro",
+        thinking="enabled",
+        temperature=0.7,
+        response_format={"type": "json_object"},
+        messages=[],
+    )
+    planner = store.record_start(
+        component="memory_planner",
+        operation="plan_memory",
+        model="deepseek-v4-pro",
+        thinking="enabled",
+        temperature=0.0,
+        response_format={"type": "json_object"},
+        messages=[],
+    )
+    chat_second = store.record_start(
+        component="chat_agent",
+        operation="grounded_search_reply",
+        model="deepseek-v4-pro",
+        thinking="enabled",
+        temperature=0.7,
+        response_format=None,
+        messages=[],
+    )
+
+    store.record_success(
+        trace_id=chat_first,
+        response_text="直接回复",
+        reasoning_content=None,
+        usage=None,
+        duration_ms=100.0,
+    )
+    store.record_success(
+        trace_id=planner,
+        response_text='{"operations":[]}',
+        reasoning_content=None,
+        usage=None,
+        duration_ms=1000.0,
+    )
+    store.record_success(
+        trace_id=chat_second,
+        response_text="联网搜索回复",
+        reasoning_content=None,
+        usage=None,
+        duration_ms=300.0,
+    )
+
+    snapshot = store.snapshot()
+
+    assert snapshot["summary"]["total"] == 3
+    assert snapshot["summary"]["success"] == 3
+    assert snapshot["summary"]["average_duration_ms"] == 200.0
+
+
 def test_trace_store_keeps_latest_records_and_ignores_malformed_lines():
     tmp_path = trace_dir("latest")
     path = tmp_path / "traces.jsonl"

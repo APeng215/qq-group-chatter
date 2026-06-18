@@ -201,7 +201,8 @@ def _summary(traces: list[dict[str, Any]]) -> dict[str, Any]:
     durations = [
         float(trace["duration_ms"])
         for trace in traces
-        if isinstance(trace.get("duration_ms"), int | float)
+        if trace.get("component") == "chat_agent"
+        and isinstance(trace.get("duration_ms"), int | float)
     ]
     average_duration_ms = round(sum(durations) / len(durations), 3) if durations else 0
     return {

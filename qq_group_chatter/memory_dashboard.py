@@ -17,14 +17,18 @@ def setup_memory_dashboard(driver: Any, application: Any) -> None:
 
     from nonebot.drivers import HTTPServerSetup
 
-    driver.setup_http_server(
-        HTTPServerSetup(
-            path=URL("/memory"),
-            method="GET",
-            name="qq_group_chatter_memory_dashboard",
-            handle_func=lambda request: memory_dashboard_response(application),
+    for path, name in (
+        ("/console", "qq_group_chatter_console_dashboard"),
+        ("/memory", "qq_group_chatter_memory_dashboard"),
+    ):
+        driver.setup_http_server(
+            HTTPServerSetup(
+                path=URL(path),
+                method="GET",
+                name=name,
+                handle_func=lambda request: memory_dashboard_response(application),
+            )
         )
-    )
     driver.setup_http_server(
         HTTPServerSetup(
             path=URL("/api/memory"),
@@ -183,7 +187,7 @@ def memory_dashboard_html(snapshot: dict[str, Any]) -> str:
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>长期记忆</title>
+  <title>运行控制台</title>
   <style>
     :root {{
       color-scheme: light;
@@ -195,6 +199,8 @@ def memory_dashboard_html(snapshot: dict[str, Any]) -> str:
       --accent: #2563eb;
       --accent-soft: #eff6ff;
       --danger: #b42318;
+      --success: #027a48;
+      --warning: #b54708;
       --code: #344054;
     }}
     * {{ box-sizing: border-box; }}
@@ -307,6 +313,18 @@ def memory_dashboard_html(snapshot: dict[str, Any]) -> str:
       font-size: 12px;
       font-weight: 600;
     }}
+    .status-success {{
+      background: #ecfdf3;
+      color: var(--success);
+    }}
+    .status-error {{
+      background: #fff4f2;
+      color: var(--danger);
+    }}
+    .status-running {{
+      background: #fffaeb;
+      color: var(--warning);
+    }}
     .id {{
       font-family: Consolas, "Cascadia Mono", monospace;
       color: var(--code);
@@ -347,6 +365,86 @@ def memory_dashboard_html(snapshot: dict[str, Any]) -> str:
     .trace {{
       padding: 14px 16px;
       margin-bottom: 12px;
+    }}
+    .trace-headline {{
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 8px;
+    }}
+    .trace-actions {{
+      display: inline-flex;
+      gap: 6px;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+    }}
+    .trace-action {{
+      height: 28px;
+      padding: 0 8px;
+      border-radius: 6px;
+      background: #f8fafc;
+      border-color: var(--border);
+      color: var(--code);
+      font-size: 12px;
+      font-weight: 600;
+    }}
+    .trace-meta {{
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      flex-wrap: wrap;
+      margin-top: 8px;
+    }}
+    .duration-pill {{
+      display: inline-flex;
+      align-items: center;
+      min-height: 24px;
+      padding: 2px 8px;
+      border-radius: 999px;
+      background: #f2f4f7;
+      color: var(--code);
+      font-size: 12px;
+      font-weight: 700;
+    }}
+    .duration-ok {{
+      background: #ecfdf3;
+      color: var(--success);
+    }}
+    .duration-warn {{
+      background: #fffaeb;
+      color: var(--warning);
+    }}
+    .duration-slow {{
+      background: #fff4f2;
+      color: var(--danger);
+    }}
+    .trace-filter-status {{
+      color: var(--muted);
+      margin: -6px 0 12px;
+      min-height: 20px;
+    }}
+    .trace-component-chips {{
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      margin: -4px 0 14px;
+    }}
+    .chip {{
+      height: 30px;
+      padding: 0 10px;
+      border-radius: 999px;
+      background: #fff;
+      border: 1px solid var(--border);
+      color: var(--code);
+      font-size: 12px;
+      font-weight: 700;
+    }}
+    .chip.active {{
+      background: var(--accent);
+      border-color: var(--accent);
+      color: #fff;
     }}
     .trace pre {{
       max-height: 360px;
@@ -400,16 +498,18 @@ def memory_dashboard_html(snapshot: dict[str, Any]) -> str:
       header, main {{ padding-left: 14px; padding-right: 14px; }}
       .toolbar, .summary, .grid {{ grid-template-columns: 1fr; }}
       .memory-head {{ align-items: flex-start; flex-direction: column; }}
+      .trace-headline {{ flex-direction: column; }}
+      .trace-actions {{ justify-content: flex-start; }}
     }}
   </style>
 </head>
 <body>
   <header>
-    <h1>长期记忆</h1>
-    <div class="muted">只读视图，数据来自当前 Mem0 本地存储；LLM 控制台来自本地 trace 文件。</div>
+    <h1>运行控制台</h1>
+    <div class="muted">只读视图，包含长期记忆、记忆队列和本地 LLM trace。</div>
   </header>
   <nav class="tabs" aria-label="dashboard sections">
-    <button id="memory-tab" class="tab active" type="button">长期记忆</button>
+    <button id="memory-tab" class="tab active" type="button">记忆库</button>
     <button id="llm-tab" class="tab" type="button">LLM 控制台</button>
   </nav>
   <main>
@@ -448,6 +548,8 @@ def memory_dashboard_html(snapshot: dict[str, Any]) -> str:
       </section>
       <section id="trace-summary" class="summary"></section>
       <section id="trace-errors"></section>
+      <section id="trace-filter-status" class="trace-filter-status"></section>
+      <section id="trace-component-chips" class="trace-component-chips"></section>
       <section id="trace-list"></section>
     </section>
   </main>
@@ -469,6 +571,8 @@ def memory_dashboard_html(snapshot: dict[str, Any]) -> str:
     const refreshEl = document.querySelector("#refresh");
     const traceSummaryEl = document.querySelector("#trace-summary");
     const traceErrorsEl = document.querySelector("#trace-errors");
+    const traceFilterStatusEl = document.querySelector("#trace-filter-status");
+    const traceComponentChipsEl = document.querySelector("#trace-component-chips");
     const traceListEl = document.querySelector("#trace-list");
     const traceSearchEl = document.querySelector("#trace-search");
     const traceComponentEl = document.querySelector("#trace-component");
@@ -484,6 +588,44 @@ def memory_dashboard_html(snapshot: dict[str, Any]) -> str:
 
     function formatTraceText(value) {{
       return escapeHtml(String(value ?? "").replace(/\\\\n/g, "\\n"));
+    }}
+
+    function formatDurationMs(value) {{
+      if (typeof value !== "number" || !Number.isFinite(value)) return "未完成";
+      if (value >= 1000) return `${{(value / 1000).toFixed(value >= 10000 ? 1 : 2)}} s`;
+      return `${{Math.round(value)}} ms`;
+    }}
+
+    function durationSeverityClass(value) {{
+      if (typeof value !== "number" || !Number.isFinite(value)) return "";
+      if (value >= 8000) return "duration-slow";
+      if (value >= 3000) return "duration-warn";
+      return "duration-ok";
+    }}
+
+    function traceStatusClass(status) {{
+      if (status === "success") return "status-success";
+      if (status === "error") return "status-error";
+      if (status === "running") return "status-running";
+      return "";
+    }}
+
+    function traceCopyPayload(item, kind) {{
+      if (kind === "id") return String(item?.trace_id || "");
+      if (kind === "response") return String(item?.response_text || "");
+      return JSON.stringify(item || {{}}, null, 2);
+    }}
+
+    async function copyTraceText(button, text) {{
+      const original = button.textContent;
+      try {{
+        await navigator.clipboard.writeText(text);
+        button.textContent = "已复制";
+      }} catch (error) {{
+        button.textContent = "复制失败";
+      }} finally {{
+        window.setTimeout(() => {{ button.textContent = original; }}, 1200);
+      }}
     }}
 
     function renderTraceMessages(messages) {{
@@ -593,14 +735,20 @@ def memory_dashboard_html(snapshot: dict[str, Any]) -> str:
 
     function renderTraceSummary(traces = traceSnapshot.traces || []) {{
       const s = traceSnapshot.summary || {{}};
+      const visibleCompleted = traces.filter(item => typeof item.duration_ms === "number");
+      const visibleAverage = visibleCompleted.length
+        ? Math.round(visibleCompleted.reduce((sum, item) => sum + item.duration_ms, 0) / visibleCompleted.length)
+        : 0;
       traceSummaryEl.innerHTML = [
         ["总数", s.total || 0],
         ["运行中", s.running || 0],
         ["成功", s.success || 0],
         ["错误", s.error || 0],
       ].map(([label, value]) => `<div><span class="muted">${{label}}</span><strong>${{value}}</strong></div>`).join("") +
+        `<div><span class="muted">当前匹配</span><strong>${{traces.length}}</strong></div>` +
         `<div><span class="muted">thinking 内容</span><strong>${{traces.filter(traceHasReasoningContent).length}}</strong></div>` +
-        `<div><span class="muted">平均耗时 ms</span><strong>${{escapeHtml(s.average_duration_ms || 0)}}</strong></div>`;
+        `<div><span class="muted">匹配平均耗时</span><strong>${{escapeHtml(formatDurationMs(visibleAverage))}}</strong></div>` +
+        `<div><span class="muted">聊天平均耗时</span><strong>${{escapeHtml(formatDurationMs(s.average_duration_ms || 0))}}</strong></div>`;
     }}
 
     function renderTraceErrors() {{
@@ -615,6 +763,17 @@ def memory_dashboard_html(snapshot: dict[str, Any]) -> str:
       traceComponentEl.innerHTML = '<option value="">全部 component</option>' +
         components.map(component => `<option value="${{escapeHtml(component)}}">${{escapeHtml(component)}}</option>`).join("");
       traceComponentEl.value = components.includes(current) ? current : "";
+      renderTraceComponentChips(components);
+    }}
+
+    function renderTraceComponentChips(components = []) {{
+      const current = traceComponentEl.value;
+      traceComponentChipsEl.innerHTML = [
+        `<button class="chip ${{current ? "" : "active"}}" type="button" data-component-filter="">全部</button>`,
+        ...components.map(component =>
+          `<button class="chip ${{component === current ? "active" : ""}}" type="button" data-component-filter="${{escapeHtml(component)}}">${{escapeHtml(component)}}</button>`
+        ),
+      ].join("");
     }}
 
     function filteredTraces() {{
@@ -627,6 +786,16 @@ def memory_dashboard_html(snapshot: dict[str, Any]) -> str:
         if (!q) return true;
         return JSON.stringify(item).toLowerCase().includes(q);
       }});
+    }}
+
+    function renderTraceFilterStatus(traces) {{
+      const total = (traceSnapshot.traces || []).length;
+      const filters = [];
+      if (traceComponentEl.value) filters.push(`component=${{traceComponentEl.value}}`);
+      if (traceStatusEl.value) filters.push(`status=${{traceStatusEl.value}}`);
+      if (traceSearchEl.value.trim()) filters.push("包含搜索词");
+      const filterText = filters.length ? `筛选：${{filters.join("，")}}` : "未筛选";
+      traceFilterStatusEl.textContent = `${{filterText}} · 显示 ${{traces.length}} / ${{total}} 条`;
     }}
 
     function captureTraceDetailState() {{
@@ -648,6 +817,7 @@ def memory_dashboard_html(snapshot: dict[str, Any]) -> str:
       const detailState = captureTraceDetailState();
       const traces = filteredTraces();
       renderTraceSummary(traces);
+      renderTraceFilterStatus(traces);
       if (!traces.length) {{
         traceListEl.innerHTML = '<div class="empty">没有匹配的 LLM trace</div>';
         return;
@@ -656,14 +826,22 @@ def memory_dashboard_html(snapshot: dict[str, Any]) -> str:
         const traceKey = String(item.trace_id || item.created_at || "");
         const usage = JSON.stringify(item.usage || {{}}, null, 2);
         return `<article class="trace">
-          <div class="memory-head">
+          <div class="trace-headline">
             <div class="badges">
-              <span class="badge">${{escapeHtml(item.status || "running")}}</span>
+              <span class="badge ${{traceStatusClass(item.status)}}">${{escapeHtml(item.status || "running")}}</span>
               <span class="badge">${{escapeHtml(item.component || "unknown")}}</span>
               <span class="badge">${{escapeHtml(item.operation || "unknown")}}</span>
               <span class="id">${{escapeHtml(item.trace_id)}}</span>
             </div>
-            <div class="muted">${{escapeHtml(item.created_at || "")}} · ${{escapeHtml(item.duration_ms ?? "")}} ms</div>
+            <div class="trace-actions">
+              <button class="trace-action" type="button" data-copy-trace-id="${{escapeHtml(traceKey)}}" data-copy-kind="id">复制 ID</button>
+              <button class="trace-action" type="button" data-copy-trace-id="${{escapeHtml(traceKey)}}" data-copy-kind="response">复制响应</button>
+              <button class="trace-action" type="button" data-copy-trace-id="${{escapeHtml(traceKey)}}" data-copy-kind="json">复制 JSON</button>
+            </div>
+          </div>
+          <div class="trace-meta">
+            <div class="muted">${{escapeHtml(item.created_at || "")}}</div>
+            <span class="duration-pill ${{durationSeverityClass(item.duration_ms)}}">${{escapeHtml(formatDurationMs(item.duration_ms))}}</span>
           </div>
           <div class="grid">
             <div><span class="muted">model</span><div>${{escapeHtml(item.model || "")}}</div></div>
@@ -734,6 +912,24 @@ def memory_dashboard_html(snapshot: dict[str, Any]) -> str:
       }}
     }}
 
+    function onTraceComponentChipClick(event) {{
+      const button = event.target.closest("[data-component-filter]");
+      if (!button) return;
+      traceComponentEl.value = button.dataset.componentFilter || "";
+      renderTraceList();
+      renderTraceComponentChips([...new Set((traceSnapshot.traces || []).map(item => item.component).filter(Boolean))].sort());
+    }}
+
+    function onTraceListClick(event) {{
+      const button = event.target.closest("[data-copy-trace-id]");
+      if (!button) return;
+      const traceId = button.dataset.copyTraceId || "";
+      const item = (traceSnapshot.traces || []).find(trace =>
+        String(trace.trace_id || trace.created_at || "") === traceId
+      );
+      copyTraceText(button, traceCopyPayload(item, button.dataset.copyKind || "json"));
+    }}
+
     function showPanel(name) {{
       const showMemory = name === "memory";
       memoryPanelEl.hidden = !showMemory;
@@ -758,6 +954,8 @@ def memory_dashboard_html(snapshot: dict[str, Any]) -> str:
     traceStatusEl.addEventListener("change", renderTraceList);
     traceRefreshEl.addEventListener("click", refreshTraces);
     traceClearEl.addEventListener("click", clearTraces);
+    traceComponentChipsEl.addEventListener("click", onTraceComponentChipClick);
+    traceListEl.addEventListener("click", onTraceListClick);
     memoryTabEl.addEventListener("click", () => showPanel("memory"));
     llmTabEl.addEventListener("click", () => showPanel("llm"));
     syncKinds();
