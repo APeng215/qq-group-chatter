@@ -49,6 +49,17 @@ def test_default_mem0_client_uses_mem0_when_deepseek_key_exists(monkeypatch):
     assert "MEM0_DIR" in os.environ
 
 
+def test_default_mem0_client_disables_mem0_telemetry_by_default(monkeypatch):
+    FakeMemory.created.clear()
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "secret")
+    monkeypatch.delenv("MEM0_TELEMETRY", raising=False)
+    monkeypatch.setitem(sys.modules, "mem0", SimpleNamespace(Memory=FakeMemory))
+
+    create_default_mem0_client()
+
+    assert os.environ["MEM0_TELEMETRY"] == "false"
+
+
 def test_default_mem0_client_wraps_mem0_initialization_errors(monkeypatch):
     monkeypatch.setenv("DEEPSEEK_API_KEY", "secret")
     monkeypatch.setitem(sys.modules, "mem0", SimpleNamespace(Memory=BrokenMemory))

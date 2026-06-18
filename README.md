@@ -69,6 +69,7 @@ WEB_SEARCH_ENABLED=false
 
 ```env
 # Mem0 本地 embedding 模型
+MEM0_TELEMETRY=false
 MEM0_FASTEMBED_MODEL=BAAI/bge-small-zh-v1.5
 
 # 短期记忆持久化；prompt 仍只读取最近 30 条

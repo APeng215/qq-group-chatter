@@ -80,6 +80,7 @@ def create_default_mem0_client(
 
     mem0_dir = Path(os.getenv("MEM0_DIR", ".mem0")).resolve()
     os.environ.setdefault("MEM0_DIR", str(mem0_dir))
+    os.environ.setdefault("MEM0_TELEMETRY", "false")
 
     try:
         from mem0 import Memory
