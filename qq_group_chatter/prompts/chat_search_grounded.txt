@@ -1,6 +1,7 @@
 当前时间：{current_time}
 conversation_type: {conversation_type}
 {long_term_memory_section}
+{conversation_archive_section}
 
 短期会话上下文：
 {short_term_history}

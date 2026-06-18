@@ -7,6 +7,7 @@ import pytest
 from qq_group_chatter.app import (
     MemoryConfigurationError,
     NoopMem0Client,
+    create_default_conversation_archive_service,
     create_default_mem0_client,
 )
 
@@ -94,6 +95,25 @@ def test_default_mem0_client_collection_name_tracks_fastembed_model(monkeypatch)
     assert first_collection.endswith("_512d")
     assert second_collection.startswith("qq_group_chatter_memories_")
     assert first_collection != second_collection
+
+
+def test_default_conversation_archive_service_uses_separate_mem0_namespace(monkeypatch):
+    FakeMemory.created.clear()
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "secret")
+    monkeypatch.setitem(sys.modules, "mem0", SimpleNamespace(Memory=FakeMemory))
+
+    service = create_default_conversation_archive_service()
+
+    assert service is not None
+    config = service._mem0["config"]
+    collection = config["vector_store"]["config"]["collection_name"]
+    assert collection.startswith("qq_group_chatter_archive_")
+    assert config["vector_store"]["config"]["path"].endswith(".mem0\\qdrant-archive") or config[
+        "vector_store"
+    ]["config"]["path"].endswith(".mem0/qdrant-archive")
+    assert config["history_db_path"].endswith(".mem0\\archive-history.db") or config[
+        "history_db_path"
+    ].endswith(".mem0/archive-history.db")
 
 
 def test_default_long_term_memory_service_uses_deepseek_planner(monkeypatch):

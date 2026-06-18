@@ -3,6 +3,7 @@ import pytest
 from qq_group_chatter.agent.chat_agent import ChatAgent, ChatReplyDecision, WebSearchDecision
 from qq_group_chatter.models import (
     ChatMessage,
+    ConversationArchiveRecord,
     ErrorNoticeContext,
     LongTermMemoryBundle,
     LongTermMemoryRecord,
@@ -63,6 +64,41 @@ class EnqueueFailingLongTermMemory(FakeLongTermMemory):
         raise RuntimeError("api_key=sk-secret failed")
 
 
+class FakeConversationArchive:
+    def __init__(self, events=None, records=None):
+        self.events = events
+        self.records = records or [
+            ConversationArchiveRecord(
+                content="我买的苹果太酸了",
+                role="user",
+                user_id="123456",
+                nickname="alice",
+                message_id="archive-1",
+                timestamp=120.0,
+                score=0.95,
+            )
+        ]
+        self.search_calls = []
+        self.enqueued = []
+
+    async def enqueue_message(self, message):
+        if self.events is not None:
+            self.events.append("archive.enqueue")
+        self.enqueued.append(message)
+
+    async def search(self, user_message, context):
+        if self.events is not None:
+            self.events.append("archive.search")
+        self.search_calls.append({"user_message": user_message, "context": context})
+        return self.records
+
+
+class FailingConversationArchive(FakeConversationArchive):
+    async def search(self, user_message, context):
+        self.search_calls.append({"user_message": user_message, "context": context})
+        raise RuntimeError("archive unavailable")
+
+
 class FakeResponder:
     def __init__(self, events=None):
         self.events = events
@@ -76,6 +112,7 @@ class FakeResponder:
         context,
         short_term_messages,
         long_term_memory,
+        conversation_archive=None,
         memory_warning=None,
     ):
         if self.events is not None:
@@ -85,6 +122,7 @@ class FakeResponder:
                 "user_message": user_message,
                 "short_term_messages": short_term_messages,
                 "long_term_memory": long_term_memory,
+                "conversation_archive": conversation_archive,
                 "memory_warning": memory_warning,
             }
         )
@@ -114,6 +152,7 @@ class FixedResponder:
         context,
         short_term_messages,
         long_term_memory,
+        conversation_archive=None,
         memory_warning=None,
     ):
         self.calls.append(
@@ -121,6 +160,7 @@ class FixedResponder:
                 "user_message": user_message,
                 "short_term_messages": short_term_messages,
                 "long_term_memory": long_term_memory,
+                "conversation_archive": conversation_archive,
                 "memory_warning": memory_warning,
             }
         )
@@ -135,6 +175,7 @@ class FixedResponder:
         context,
         short_term_messages,
         long_term_memory,
+        conversation_archive=None,
     ):
         self.grounded_calls.append(
             {
@@ -144,6 +185,7 @@ class FixedResponder:
                 "context": context,
                 "short_term_messages": short_term_messages,
                 "long_term_memory": long_term_memory,
+                "conversation_archive": conversation_archive,
             }
         )
         return "神奈基于搜索资料的回复"
@@ -213,6 +255,119 @@ async def test_orchestrator_returns_pending_reply_without_recording_assistant_me
         "agent.generate_reply",
     ]
     assert [item.content for item in await short_term.get_recent("qq_group:888888")] == ["我不吃辣"]
+
+
+async def test_orchestrator_searches_archive_and_passes_results_to_agent():
+    events = []
+    short_term = RecordingShortTermMemory(events)
+    long_term = FakeLongTermMemory(events)
+    archive = FakeConversationArchive(events)
+    responder = FakeResponder(events)
+    orchestrator = ChatOrchestrator(
+        short_term_memory=short_term,
+        long_term_memory=long_term,
+        conversation_archive=archive,
+        chat_agent=responder,
+    )
+    context = build_group_conversation_context(
+        group_id=888888,
+        user_id=123456,
+        message_id="m1",
+        nickname="alice",
+        timestamp=123.0,
+    )
+
+    pending_reply = await orchestrator.handle_message(context=context, user_message="苹果")
+
+    assert pending_reply is not None
+    assert archive.search_calls[0]["user_message"] == "苹果"
+    assert responder.calls[0]["conversation_archive"] == archive.records
+    assert events == [
+        "short_term.add",
+        "archive.enqueue",
+        "short_term.get_recent",
+        "long_term.search",
+        "archive.search",
+        "agent.generate_reply",
+    ]
+
+
+async def test_orchestrator_continues_when_archive_search_fails():
+    short_term = ShortTermMemoryService(max_messages_per_conversation=10)
+    long_term = FakeLongTermMemory()
+    archive = FailingConversationArchive()
+    responder = FakeResponder()
+    orchestrator = ChatOrchestrator(
+        short_term_memory=short_term,
+        long_term_memory=long_term,
+        conversation_archive=archive,
+        chat_agent=responder,
+    )
+    context = build_group_conversation_context(
+        group_id=888888,
+        user_id=123456,
+        message_id="m1",
+        nickname="alice",
+        timestamp=123.0,
+    )
+
+    pending_reply = await orchestrator.handle_message(context=context, user_message="苹果")
+
+    assert pending_reply is not None
+    assert pending_reply.content == "好的"
+    assert responder.calls[0]["conversation_archive"] == []
+
+
+async def test_record_user_message_archives_without_reply_flow():
+    short_term = ShortTermMemoryService(max_messages_per_conversation=10)
+    long_term = FakeLongTermMemory()
+    archive = FakeConversationArchive(records=[])
+    responder = FakeResponder()
+    orchestrator = ChatOrchestrator(
+        short_term_memory=short_term,
+        long_term_memory=long_term,
+        conversation_archive=archive,
+        chat_agent=responder,
+    )
+    context = build_group_conversation_context(
+        group_id=888888,
+        user_id=123456,
+        message_id="m1",
+        nickname="alice",
+        timestamp=123.0,
+    )
+
+    await orchestrator.record_user_message(context=context, user_message="路过说一句")
+
+    assert [message.content for message in archive.enqueued] == ["路过说一句"]
+    assert archive.enqueued[0].role == "user"
+    assert responder.calls == []
+
+
+async def test_record_assistant_reply_archives_after_send_success():
+    short_term = ShortTermMemoryService(max_messages_per_conversation=10)
+    long_term = FakeLongTermMemory()
+    archive = FakeConversationArchive(records=[])
+    responder = FakeResponder()
+    orchestrator = ChatOrchestrator(
+        short_term_memory=short_term,
+        long_term_memory=long_term,
+        conversation_archive=archive,
+        chat_agent=responder,
+    )
+    context = build_group_conversation_context(
+        group_id=888888,
+        user_id=123456,
+        message_id="m1",
+        nickname="alice",
+        timestamp=123.0,
+    )
+    pending_reply = await orchestrator.handle_message(context=context, user_message="苹果")
+
+    await orchestrator.record_assistant_reply(pending_reply)
+
+    assert [message.role for message in archive.enqueued] == ["user", "assistant"]
+    assert archive.enqueued[-1].content == "好的"
 
 
 async def test_orchestrator_reads_thirty_short_term_messages_by_default():

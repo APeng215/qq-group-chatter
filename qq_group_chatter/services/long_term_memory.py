@@ -161,6 +161,7 @@ class LongTermMemoryService:
                 conversation_memories=existing_memories.conversation_memories,
                 global_memories=existing_memories.global_memories,
                 short_term_messages=job.short_term_messages,
+                conversation_archive=job.conversation_archive,
                 assistant_reply=job.assistant_reply,
             )
         except Exception as exc:

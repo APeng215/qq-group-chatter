@@ -7,6 +7,7 @@ from typing import Any
 
 from qq_group_chatter.models import (
     ChatMessage,
+    ConversationArchiveRecord,
     ConversationContext,
     ErrorNoticeContext,
     LongTermMemoryBundle,
@@ -117,6 +118,7 @@ class ChatAgent:
         context: ConversationContext,
         short_term_messages: list[ChatMessage],
         long_term_memory: LongTermMemoryBundle,
+        conversation_archive: list[ConversationArchiveRecord] | None = None,
         memory_warning: ErrorNoticeContext | None = None,
     ) -> ChatDecision:
         prompt = self._build_prompt(
@@ -124,6 +126,7 @@ class ChatAgent:
             context=context,
             short_term_messages=short_term_messages,
             long_term_memory=long_term_memory,
+            conversation_archive=conversation_archive or [],
             memory_warning=memory_warning,
         )
         if self._llm is None:
@@ -160,6 +163,7 @@ class ChatAgent:
         context: ConversationContext,
         short_term_messages: list[ChatMessage],
         long_term_memory: LongTermMemoryBundle,
+        conversation_archive: list[ConversationArchiveRecord] | None = None,
     ) -> str:
         prompt = self._build_grounded_search_prompt(
             user_message=user_message,
@@ -168,6 +172,7 @@ class ChatAgent:
             context=context,
             short_term_messages=short_term_messages,
             long_term_memory=long_term_memory,
+            conversation_archive=conversation_archive or [],
         )
         if self._llm is None:
             return "我搜到了一些资料，但现在还没有配置聊天模型来整理成回复。"
@@ -302,6 +307,7 @@ class ChatAgent:
         context: ConversationContext,
         short_term_messages: list[ChatMessage],
         long_term_memory: LongTermMemoryBundle,
+        conversation_archive: list[ConversationArchiveRecord] | None = None,
         memory_warning: ErrorNoticeContext | None = None,
     ) -> str:
         history_messages = _history_without_current_message(short_term_messages, context)
@@ -310,6 +316,9 @@ class ChatAgent:
             current_time=current_time_text(),
             conversation_type=context.conversation_type,
             long_term_memory_section=long_term_memory.as_prompt_section(context),
+            conversation_archive_section=_format_conversation_archive(
+                conversation_archive or []
+            ),
             memory_warning=_format_memory_warning(memory_warning),
             short_term_history=history or "\u65e0",
             current_speaker=_format_current_speaker(context),
@@ -328,6 +337,7 @@ class ChatAgent:
         context: ConversationContext,
         short_term_messages: list[ChatMessage],
         long_term_memory: LongTermMemoryBundle,
+        conversation_archive: list[ConversationArchiveRecord] | None = None,
     ) -> str:
         history_messages = _history_without_current_message(short_term_messages, context)
         history = _format_short_term_history(history_messages)
@@ -335,6 +345,9 @@ class ChatAgent:
             current_time=current_time_text(),
             conversation_type=context.conversation_type,
             long_term_memory_section=long_term_memory.as_prompt_section(context),
+            conversation_archive_section=_format_conversation_archive(
+                conversation_archive or []
+            ),
             short_term_history=history or "\u65e0",
             current_speaker=_format_current_speaker(context),
             addressed_to_bot=_format_addressed_to_bot(context),
@@ -361,6 +374,28 @@ def _format_short_term_history(messages: list[ChatMessage]) -> str:
         else:
             lines.append(f"[{timestamp}] {speaker} {item.content}")
     return "\n".join(lines)
+
+
+def _format_conversation_archive(records: list[ConversationArchiveRecord]) -> str:
+    if not records:
+        return ""
+    lines = [
+        "相关历史对话（语义召回，仅表示过去说过，不代表当前事实仍成立）："
+    ]
+    for record in records:
+        speaker = _format_archive_speaker(record)
+        timestamp = format_time_text(record.timestamp)
+        if timestamp is None:
+            lines.append(f"- {speaker} {record.content}")
+        else:
+            lines.append(f"- [{timestamp}] {speaker} {record.content}")
+    return "\n".join(lines)
+
+
+def _format_archive_speaker(record: ConversationArchiveRecord) -> str:
+    if record.role == "assistant":
+        return "[神奈]"
+    return _format_user_identity(record.user_id or "未知", record.nickname)
 
 
 def _history_without_current_message(

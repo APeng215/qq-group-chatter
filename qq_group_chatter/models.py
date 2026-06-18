@@ -48,6 +48,17 @@ class ChatMessage:
 
 
 @dataclass(frozen=True)
+class ConversationArchiveRecord:
+    content: str
+    role: MessageRole
+    user_id: str | None
+    nickname: str | None
+    message_id: str | None
+    timestamp: float
+    score: float | None = None
+
+
+@dataclass(frozen=True)
 class LongTermMemoryRecord:
     id: str | None
     content: str
@@ -108,6 +119,7 @@ class LongTermMemoryIngestionJob:
     context: ConversationContext
     user_message: str
     short_term_messages: list[ChatMessage] = field(default_factory=list)
+    conversation_archive: list[ConversationArchiveRecord] = field(default_factory=list)
     existing_memories: LongTermMemoryBundle | None = None
     assistant_reply: str | None = None
     on_error_notice: Callable[[ErrorNoticeContext], Awaitable[None] | None] | None = None
@@ -120,6 +132,7 @@ class PendingAssistantReply:
     timestamp: float
     user_message: str | None = None
     short_term_messages: list[ChatMessage] = field(default_factory=list)
+    conversation_archive: list[ConversationArchiveRecord] = field(default_factory=list)
     long_term_memory: LongTermMemoryBundle | None = None
     memory_warning: ErrorNoticeContext | None = None
 

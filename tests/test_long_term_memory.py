@@ -3,6 +3,7 @@ import asyncio
 from qq_group_chatter.models import build_private_conversation_context
 from qq_group_chatter.models import (
     ChatMessage,
+    ConversationArchiveRecord,
     ErrorNoticeContext,
     LongTermMemoryBundle,
     LongTermMemoryIngestionJob,
@@ -112,6 +113,7 @@ class FakePlanner:
         conversation_memories,
         global_memories=None,
         short_term_messages=None,
+        conversation_archive=None,
         assistant_reply=None,
     ):
         self.calls.append(
@@ -122,6 +124,7 @@ class FakePlanner:
                 "conversation_memories": conversation_memories,
                 "global_memories": global_memories or [],
                 "short_term_messages": short_term_messages or [],
+                "conversation_archive": conversation_archive or [],
                 "assistant_reply": assistant_reply,
             }
         )
@@ -579,6 +582,36 @@ async def test_ingestion_passes_short_term_messages_to_planner():
     await service._process_job(job)
 
     assert planner.calls[0]["short_term_messages"] is short_term_messages
+
+
+async def test_ingestion_passes_conversation_archive_to_planner():
+    mem0 = FakeMem0Client()
+    planner = FakePlanner()
+    service = LongTermMemoryService(mem0_client=mem0, planner=planner)
+    archive_records = [
+        ConversationArchiveRecord(
+            content="我买的苹果太酸了",
+            role="user",
+            user_id="123456",
+            nickname="阿咳",
+            message_id="old-1",
+            timestamp=120.0,
+            score=0.92,
+        )
+    ]
+
+    await service.start()
+    await service.enqueue_ingestion(
+        LongTermMemoryIngestionJob(
+            context=context(),
+            user_message="你记得我之前说的苹果吗？",
+            conversation_archive=archive_records,
+        )
+    )
+    await service.join()
+    await service.stop()
+
+    assert planner.calls[0]["conversation_archive"] is archive_records
 
 
 async def test_ingestion_passes_assistant_reply_to_planner():

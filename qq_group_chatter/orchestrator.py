@@ -7,6 +7,7 @@ from typing import Any, Protocol
 from qq_group_chatter.agent.chat_agent import ChatDecision, ChatReplyDecision, WebSearchDecision
 from qq_group_chatter.models import (
     ChatMessage,
+    ConversationArchiveRecord,
     ConversationContext,
     ErrorNoticeContext,
     LongTermMemoryBundle,
@@ -34,6 +35,16 @@ class LongTermMemory(Protocol):
     async def search(self, user_message: str, context: ConversationContext): ...
 
 
+class ConversationArchive(Protocol):
+    async def enqueue_message(self, message: ChatMessage) -> None: ...
+
+    async def search(
+        self,
+        user_message: str,
+        context: ConversationContext,
+    ) -> list[ConversationArchiveRecord]: ...
+
+
 class ReplyAgent(Protocol):
     async def generate_reply(
         self,
@@ -42,6 +53,7 @@ class ReplyAgent(Protocol):
         context: ConversationContext,
         short_term_messages: list[ChatMessage],
         long_term_memory,
+        conversation_archive: list[ConversationArchiveRecord] | None = None,
         memory_warning: ErrorNoticeContext | None = None,
     ) -> ChatDecision: ...
 
@@ -54,6 +66,7 @@ class ReplyAgent(Protocol):
         context: ConversationContext,
         short_term_messages: list[ChatMessage],
         long_term_memory,
+        conversation_archive: list[ConversationArchiveRecord] | None = None,
     ) -> str: ...
 
     async def generate_error_notice(
@@ -75,11 +88,13 @@ class ChatOrchestrator:
         short_term_memory: ShortTermMemory,
         long_term_memory: LongTermMemory,
         chat_agent: ReplyAgent,
+        conversation_archive: ConversationArchive | None = None,
         web_search: WebSearch | None = None,
         short_term_limit: int = 30,
     ):
         self._short_term_memory = short_term_memory
         self._long_term_memory = long_term_memory
+        self._conversation_archive = conversation_archive
         self._chat_agent = chat_agent
         self._web_search = web_search
         self._short_term_limit = short_term_limit
@@ -124,11 +139,16 @@ class ChatOrchestrator:
                         user_memories=[],
                         conversation_memories=[],
                     )
+                conversation_archive = await self._search_conversation_archive(
+                    content,
+                    context,
+                )
                 decision = await self._chat_agent.generate_reply(
                     user_message=content,
                     context=context,
                     short_term_messages=short_term_messages,
                     long_term_memory=long_term_memory,
+                    conversation_archive=conversation_archive,
                     memory_warning=memory_warning,
                 )
                 reply = await self._resolve_decision(
@@ -137,6 +157,7 @@ class ChatOrchestrator:
                     context=context,
                     short_term_messages=short_term_messages,
                     long_term_memory=long_term_memory,
+                    conversation_archive=conversation_archive,
                     on_search_start=on_search_start,
                 )
                 return PendingAssistantReply(
@@ -145,6 +166,7 @@ class ChatOrchestrator:
                     timestamp=time(),
                     user_message=content,
                     short_term_messages=short_term_messages,
+                    conversation_archive=conversation_archive,
                     long_term_memory=long_term_memory,
                     memory_warning=memory_warning,
                 )
@@ -165,17 +187,17 @@ class ChatOrchestrator:
         content = user_message.strip()
         if not content:
             return
-        await self._short_term_memory.add_message(
-            ChatMessage(
-                conversation_id=context.conversation_id,
-                role="user",
-                content=content,
-                user_id=context.user_id,
-                nickname=context.nickname,
-                message_id=context.message_id,
-                timestamp=context.timestamp,
-            )
+        message = ChatMessage(
+            conversation_id=context.conversation_id,
+            role="user",
+            content=content,
+            user_id=context.user_id,
+            nickname=context.nickname,
+            message_id=context.message_id,
+            timestamp=context.timestamp,
         )
+        await self._short_term_memory.add_message(message)
+        await self._archive_message(message)
 
     async def _resolve_decision(
         self,
@@ -185,6 +207,7 @@ class ChatOrchestrator:
         context: ConversationContext,
         short_term_messages: list[ChatMessage],
         long_term_memory,
+        conversation_archive: list[ConversationArchiveRecord],
         on_search_start: Callable[[str], Awaitable[None] | None] | None,
     ) -> str:
         if isinstance(decision, ChatReplyDecision):
@@ -212,6 +235,7 @@ class ChatOrchestrator:
                 context=context,
                 short_term_messages=short_term_messages,
                 long_term_memory=long_term_memory,
+                conversation_archive=conversation_archive,
             )
         except Exception as exc:
             record_error("web_search", exc)
@@ -223,7 +247,7 @@ class ChatOrchestrator:
         on_memory_error_notice: Callable[[str], Awaitable[None] | None] | None = None,
     ) -> str | None:
         await self._short_term_memory.add_message(
-            ChatMessage(
+            assistant_message := ChatMessage(
                 conversation_id=reply.context.conversation_id,
                 role="assistant",
                 content=reply.content,
@@ -233,6 +257,7 @@ class ChatOrchestrator:
                 timestamp=reply.timestamp,
             )
         )
+        await self._archive_message(assistant_message)
         MESSAGES_TOTAL.labels(
             conversation_type=reply.context.conversation_type,
             result="replied",
@@ -247,6 +272,7 @@ class ChatOrchestrator:
                     context=reply.context,
                     user_message=reply.user_message,
                     short_term_messages=reply.short_term_messages,
+                    conversation_archive=reply.conversation_archive,
                     existing_memories=reply.long_term_memory,
                     assistant_reply=reply.content,
                     on_error_notice=(
@@ -301,6 +327,27 @@ class ChatOrchestrator:
             return _fallback_error_notice(error_context)
         text = str(notice).strip()
         return text or _fallback_error_notice(error_context)
+
+    async def _archive_message(self, message: ChatMessage) -> None:
+        if self._conversation_archive is None:
+            return
+        try:
+            await self._conversation_archive.enqueue_message(message)
+        except Exception as exc:
+            record_error("conversation_archive_enqueue", exc)
+
+    async def _search_conversation_archive(
+        self,
+        user_message: str,
+        context: ConversationContext,
+    ) -> list[ConversationArchiveRecord]:
+        if self._conversation_archive is None:
+            return []
+        try:
+            return await self._conversation_archive.search(user_message, context)
+        except Exception as exc:
+            record_error("conversation_archive_search", exc)
+            return []
 
 
 def _is_awaitable(value: Any) -> bool:

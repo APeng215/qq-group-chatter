@@ -6,6 +6,7 @@ from typing import Any
 
 from qq_group_chatter.models import (
     ChatMessage,
+    ConversationArchiveRecord,
     ConversationContext,
     LongTermMemoryOperation,
     LongTermMemoryRecord,
@@ -52,6 +53,7 @@ class LongTermMemoryPlanner:
         conversation_memories: list[LongTermMemoryRecord],
         global_memories: list[LongTermMemoryRecord] | None = None,
         short_term_messages: list[ChatMessage] | None = None,
+        conversation_archive: list[ConversationArchiveRecord] | None = None,
         assistant_reply: str | None = None,
     ) -> list[LongTermMemoryOperation]:
         if self._llm is None:
@@ -65,6 +67,7 @@ class LongTermMemoryPlanner:
             conversation_memories=conversation_memories,
             global_memories=resolved_global_memories,
             short_term_messages=short_term_messages or [],
+            conversation_archive=conversation_archive or [],
             assistant_reply=assistant_reply,
         )
         with observe_duration(
@@ -101,14 +104,19 @@ class LongTermMemoryPlanner:
         conversation_memories: list[LongTermMemoryRecord],
         global_memories: list[LongTermMemoryRecord],
         short_term_messages: list[ChatMessage],
+        conversation_archive: list[ConversationArchiveRecord],
         assistant_reply: str | None,
     ) -> str:
+        history_messages = _history_without_current_message(short_term_messages, context)
         return PLANNER_PROMPT_TEMPLATE.format(
             conversation_type=context.conversation_type,
             current_user_qq=context.user_id,
             current_user_nickname=_display_nickname(context.nickname),
             user_message=user_message,
-            short_term_history=_format_short_term_history(short_term_messages),
+            short_term_history=_format_short_term_history(history_messages),
+            conversation_archive_section=_format_conversation_archive_reference(
+                conversation_archive
+            ),
             assistant_reply=_format_assistant_reply(assistant_reply),
             user_memories_json=_records_json(user_memories),
             conversation_memories_json=_records_json(conversation_memories),
@@ -178,6 +186,13 @@ def _records_json(records: list[LongTermMemoryRecord]) -> str:
     )
 
 
+def _history_without_current_message(
+    messages: list[ChatMessage],
+    context: ConversationContext,
+) -> list[ChatMessage]:
+    return [message for message in messages if message.message_id != context.message_id]
+
+
 def _format_short_term_history(messages: list[ChatMessage]) -> str:
     if not messages:
         return "无"
@@ -185,6 +200,19 @@ def _format_short_term_history(messages: list[ChatMessage]) -> str:
     for message in messages:
         speaker = _message_speaker(message)
         lines.append(f"- {speaker} {message.content}")
+    return "\n".join(lines)
+
+
+def _format_conversation_archive_reference(records: list[ConversationArchiveRecord]) -> str:
+    if not records:
+        return ""
+    lines = [
+        "相关历史对话（仅用于解析当前用户消息里的“之前说的/那个/上次”等指代；"
+        "不得仅凭旧对话创建或更新长期记忆）："
+    ]
+    for record in records:
+        speaker = _archive_speaker(record)
+        lines.append(f"- [{_format_archive_time(record.timestamp)}] {speaker} {record.content}")
     return "\n".join(lines)
 
 
@@ -199,6 +227,16 @@ def _message_speaker(message: ChatMessage) -> str:
     if message.role == "assistant":
         return "[神奈]"
     return f"[QQ:{message.user_id or '未知'} 昵称:{_display_nickname(message.nickname)}]"
+
+
+def _archive_speaker(record: ConversationArchiveRecord) -> str:
+    if record.role == "assistant":
+        return "[神奈]"
+    return f"[QQ:{record.user_id or '未知'} 昵称:{_display_nickname(record.nickname)}]"
+
+
+def _format_archive_time(value: float) -> str:
+    return f"{value:.0f}"
 
 
 def _records_for_scope(

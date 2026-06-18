@@ -1,5 +1,6 @@
 from qq_group_chatter.models import (
     ChatMessage,
+    ConversationArchiveRecord,
     LongTermMemoryOperation,
     LongTermMemoryRecord,
     build_group_conversation_context,
@@ -125,7 +126,7 @@ async def test_planner_returns_empty_operations_for_empty_or_non_json_response()
     assert operations == []
 
 
-async def test_planner_prompt_includes_short_term_context_as_auxiliary_history():
+async def test_planner_prompt_filters_current_message_from_short_term_context():
     llm = FakePlannerLLM({"operations": []})
     planner = LongTermMemoryPlanner(llm=llm)
 
@@ -150,6 +151,15 @@ async def test_planner_prompt_includes_short_term_context_as_auxiliary_history()
                 content="对，我还是想吃那个",
                 user_id="123456",
                 nickname="阿咳",
+                message_id="old-same-content",
+                timestamp=122.5,
+            ),
+            ChatMessage(
+                conversation_id="qq_group:888888",
+                role="user",
+                content="对，我还是想吃那个",
+                user_id="123456",
+                nickname="阿咳",
                 message_id="m1",
                 timestamp=123.0,
             ),
@@ -158,9 +168,39 @@ async def test_planner_prompt_includes_short_term_context_as_auxiliary_history()
 
     assert "短期对话上下文" in llm.prompts[0]
     assert "[神奈] 上次你说晚饭想吃咖喱" in llm.prompts[0]
-    assert "[QQ:123456 昵称:阿咳] 对，我还是想吃那个" in llm.prompts[0]
+    assert llm.prompts[0].count("[QQ:123456 昵称:阿咳] 对，我还是想吃那个") == 1
+    assert "用户消息：\n对，我还是想吃那个" in llm.prompts[0]
     assert "阿咳：对，我还是想吃那个" not in llm.prompts[0]
     assert "只辅助理解本轮用户消息" in llm.prompts[0]
+
+
+async def test_planner_prompt_includes_conversation_archive_as_reference_only():
+    llm = FakePlannerLLM({"operations": []})
+    planner = LongTermMemoryPlanner(llm=llm)
+
+    await planner.plan(
+        user_message="你记得我之前说的苹果吗？",
+        context=context(),
+        user_memories=[],
+        conversation_memories=[],
+        conversation_archive=[
+            ConversationArchiveRecord(
+                content="我买的苹果太酸了",
+                role="user",
+                user_id="123456",
+                nickname="阿咳",
+                message_id="old-1",
+                timestamp=120.0,
+                score=0.91,
+            )
+        ],
+    )
+
+    prompt = llm.prompts[0]
+    assert "相关历史对话（仅用于解析当前用户消息里的" in prompt
+    assert "不得仅凭旧对话创建或更新长期记忆" in prompt
+    assert "[QQ:123456 昵称:阿咳] 我买的苹果太酸了" in prompt
+    assert "你记得我之前说的苹果吗？" in prompt
 
 
 async def test_planner_prompt_includes_assistant_reply_only_as_confirmation_context():
