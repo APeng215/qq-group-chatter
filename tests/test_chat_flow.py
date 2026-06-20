@@ -370,6 +370,36 @@ async def test_record_assistant_reply_archives_after_send_success():
     assert archive.enqueued[-1].content == "好的"
 
 
+async def test_record_assistant_reply_archives_bot_identity_after_send_success():
+    short_term = ShortTermMemoryService(max_messages_per_conversation=10)
+    long_term = FakeLongTermMemory()
+    archive = FakeConversationArchive(records=[])
+    responder = FakeResponder()
+    orchestrator = ChatOrchestrator(
+        short_term_memory=short_term,
+        long_term_memory=long_term,
+        conversation_archive=archive,
+        chat_agent=responder,
+    )
+    context = build_group_conversation_context(
+        group_id=888888,
+        user_id=123456,
+        message_id="m1",
+        nickname="alice",
+        timestamp=123.0,
+        bot_user_id=654321,
+        bot_nickname="神奈",
+    )
+    pending_reply = await orchestrator.handle_message(context=context, user_message="苹果")
+
+    await orchestrator.record_assistant_reply(pending_reply)
+
+    assistant_message = archive.enqueued[-1]
+    assert assistant_message.role == "assistant"
+    assert assistant_message.user_id == "654321"
+    assert assistant_message.nickname == "神奈"
+
+
 async def test_orchestrator_reads_thirty_short_term_messages_by_default():
     class LimitRecordingShortTermMemory(ShortTermMemoryService):
         def __init__(self):

@@ -200,13 +200,20 @@ def _normalize_archive_records(raw: Any) -> list[ConversationArchiveRecord]:
         ).strip()
         if not content:
             continue
+        role = _role_text(metadata.get("role"))
+        user_id = _optional_text(metadata.get("source_user_id"))
+        nickname = _optional_text(metadata.get("source_nickname"))
+        message_id = _optional_text(metadata.get("message_id"))
+        if _looks_like_legacy_assistant_record(metadata, user_id, nickname, message_id):
+            role = "assistant"
+            nickname = "神奈"
         records.append(
             ConversationArchiveRecord(
                 content=content,
-                role=_role_text(metadata.get("role")),
-                user_id=_optional_text(metadata.get("source_user_id")),
-                nickname=_optional_text(metadata.get("source_nickname")),
-                message_id=_optional_text(metadata.get("message_id")),
+                role=role,
+                user_id=user_id,
+                nickname=nickname,
+                message_id=message_id,
                 timestamp=_float_or_zero(metadata.get("timestamp")),
                 score=_optional_float(item.get("score")),
             )
@@ -260,6 +267,20 @@ def _rerank_score(
 def _role_text(value: object) -> str:
     text = str(value or "").strip()
     return "assistant" if text == "assistant" else "user"
+
+
+def _looks_like_legacy_assistant_record(
+    metadata: dict[str, object],
+    user_id: str | None,
+    nickname: str | None,
+    message_id: str | None,
+) -> bool:
+    return (
+        metadata.get("role") is None
+        and user_id is None
+        and nickname is None
+        and message_id is None
+    )
 
 
 def _optional_text(value: object) -> str | None:

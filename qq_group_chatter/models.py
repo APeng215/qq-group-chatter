@@ -34,6 +34,8 @@ class ConversationContext:
     nickname: str | None
     timestamp: float
     is_addressed_to_bot: bool = False
+    bot_user_id: str | None = None
+    bot_nickname: str | None = "神奈"
 
 
 @dataclass(frozen=True)
@@ -178,6 +180,8 @@ def build_group_conversation_context(
     timestamp: float,
     is_addressed_to_bot: bool = False,
     reply_to_message_id: str | int | None = None,
+    bot_user_id: str | int | None = None,
+    bot_nickname: str | None = "神奈",
 ) -> ConversationContext:
     group = str(group_id)
     return ConversationContext(
@@ -190,6 +194,8 @@ def build_group_conversation_context(
         nickname=nickname,
         timestamp=timestamp,
         is_addressed_to_bot=is_addressed_to_bot,
+        bot_user_id=_optional_text(bot_user_id),
+        bot_nickname=_optional_text(bot_nickname),
     )
 
 
@@ -201,6 +207,8 @@ def build_private_conversation_context(
     timestamp: float,
     is_addressed_to_bot: bool = True,
     reply_to_message_id: str | int | None = None,
+    bot_user_id: str | int | None = None,
+    bot_nickname: str | None = "神奈",
 ) -> ConversationContext:
     user = str(user_id)
     return ConversationContext(
@@ -213,6 +221,8 @@ def build_private_conversation_context(
         nickname=nickname,
         timestamp=timestamp,
         is_addressed_to_bot=is_addressed_to_bot,
+        bot_user_id=_optional_text(bot_user_id),
+        bot_nickname=_optional_text(bot_nickname),
     )
 
 

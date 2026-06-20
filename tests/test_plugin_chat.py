@@ -138,6 +138,30 @@ def test_context_from_group_event_uses_group_card_before_nickname(monkeypatch):
     assert context.nickname == "群名片"
 
 
+def test_context_from_group_event_captures_bot_identity(monkeypatch):
+    class FakeGroupMessageEvent:
+        pass
+
+    class FakePrivateMessageEvent:
+        pass
+
+    monkeypatch.setattr("qq_group_chatter.plugins.chat.GroupMessageEvent", FakeGroupMessageEvent)
+    monkeypatch.setattr("qq_group_chatter.plugins.chat.PrivateMessageEvent", FakePrivateMessageEvent)
+    source_event = FakeGroupMessageEvent()
+    source_event.self_id = 654321
+    source_event.group_id = 888888
+    source_event.user_id = 123456
+    source_event.message_id = "m1"
+    source_event.time = 123.0
+    source_event.sender = SimpleNamespace(card="群名片", nickname="QQ昵称")
+
+    context = _context_from_event(source_event)
+
+    assert context is not None
+    assert context.bot_user_id == "654321"
+    assert context.bot_nickname == "神奈"
+
+
 def test_context_from_group_event_marks_to_me_as_addressed_to_bot(monkeypatch):
     class FakeGroupMessageEvent:
         pass

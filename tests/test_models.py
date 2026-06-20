@@ -16,6 +16,9 @@ def prompt_context():
         message_id="m1",
         nickname="阿咳",
         timestamp=123.0,
+        is_addressed_to_bot=False,
+        bot_user_id=None,
+        bot_nickname="神奈",
     )
 
 
@@ -68,6 +71,21 @@ def test_group_conversation_context_keeps_reply_message_id():
     )
 
     assert context.reply_to_message_id == "m1"
+
+
+def test_group_conversation_context_keeps_bot_identity():
+    context = build_group_conversation_context(
+        group_id=888888,
+        user_id=123456,
+        message_id="m2",
+        nickname="阿咳",
+        timestamp=123.0,
+        bot_user_id=654321,
+        bot_nickname="神奈",
+    )
+
+    assert context.bot_user_id == "654321"
+    assert context.bot_nickname == "神奈"
 
 
 def test_user_memory_id_is_isolated_by_conversation():

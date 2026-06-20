@@ -182,6 +182,33 @@ async def test_archive_search_filters_current_conversation_and_returns_records()
     assert records[0].score is not None
 
 
+async def test_archive_search_treats_legacy_senderless_reply_as_assistant():
+    mem0 = FakeMem0Client(
+        search_results=[
+            {
+                "id": "r1",
+                "memory": "老大，吃碗热馄饨面吧",
+                "score": 0.91,
+                "metadata": {
+                    "conversation_id": "qq_group:888888",
+                    "source_user_id": None,
+                    "source_nickname": None,
+                    "message_id": None,
+                    "timestamp": 1000.0,
+                },
+            }
+        ]
+    )
+    service = ConversationArchiveService(mem0_client=mem0)
+
+    records = await service.search("馄饨面", context())
+
+    assert len(records) == 1
+    assert records[0].role == "assistant"
+    assert records[0].user_id is None
+    assert records[0].nickname == "神奈"
+
+
 async def test_archive_search_excludes_current_message():
     mem0 = FakeMem0Client(
         search_results=[

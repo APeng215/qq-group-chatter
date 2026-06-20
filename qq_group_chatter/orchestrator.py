@@ -251,8 +251,8 @@ class ChatOrchestrator:
                 conversation_id=reply.context.conversation_id,
                 role="assistant",
                 content=reply.content,
-                user_id=None,
-                nickname=None,
+                user_id=reply.context.bot_user_id,
+                nickname=reply.context.bot_nickname,
                 message_id=None,
                 timestamp=reply.timestamp,
             )

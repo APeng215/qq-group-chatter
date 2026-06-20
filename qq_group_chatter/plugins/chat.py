@@ -59,6 +59,7 @@ def _context_from_event(event) -> ConversationContext | None:
     message_id = str(getattr(event, "message_id", ""))
     reply_to_message_id = _reply_to_message_id_from_event(event)
     user_id = str(getattr(event, "user_id", ""))
+    bot_user_id = _optional_event_text(getattr(event, "self_id", None))
     sender = getattr(event, "sender", None)
     nickname = _sender_text(sender, "nickname")
 
@@ -72,6 +73,8 @@ def _context_from_event(event) -> ConversationContext | None:
             timestamp=timestamp,
             is_addressed_to_bot=bool(getattr(event, "to_me", False)),
             reply_to_message_id=reply_to_message_id,
+            bot_user_id=bot_user_id,
+            bot_nickname="神奈",
         )
     if PrivateMessageEvent is not object and isinstance(event, PrivateMessageEvent):
         return build_private_conversation_context(
@@ -81,8 +84,17 @@ def _context_from_event(event) -> ConversationContext | None:
             timestamp=timestamp,
             is_addressed_to_bot=True,
             reply_to_message_id=reply_to_message_id,
+            bot_user_id=bot_user_id,
+            bot_nickname="神奈",
         )
     return None
+
+
+def _optional_event_text(value) -> str | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None
 
 
 def _sender_text(sender, field: str) -> str | None:
