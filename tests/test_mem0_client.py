@@ -127,6 +127,19 @@ def test_default_conversation_archive_service_uses_separate_mem0_namespace(monke
     ].endswith(".mem0/archive-history.db")
 
 
+def test_default_conversation_archive_service_aligns_rerank_weights_with_long_term_memory(monkeypatch):
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "secret")
+    monkeypatch.delenv("CONVERSATION_ARCHIVE_SEMANTIC_WEIGHT", raising=False)
+    monkeypatch.delenv("CONVERSATION_ARCHIVE_RECENCY_WEIGHT", raising=False)
+    monkeypatch.setitem(sys.modules, "mem0", SimpleNamespace(Memory=FakeMemory))
+
+    service = create_default_conversation_archive_service()
+
+    assert service is not None
+    assert service._semantic_weight == 0.85
+    assert service._recency_weight == 0.15
+
+
 def test_default_long_term_memory_service_uses_deepseek_planner(monkeypatch):
     monkeypatch.setenv("DEEPSEEK_API_KEY", "secret")
     monkeypatch.delenv("DEEPSEEK_THINKING", raising=False)
@@ -143,12 +156,50 @@ def test_default_long_term_memory_service_uses_deepseek_planner(monkeypatch):
 def test_default_long_term_memory_service_reads_top_k(monkeypatch):
     monkeypatch.setenv("DEEPSEEK_API_KEY", "secret")
     monkeypatch.setenv("LONG_TERM_MEMORY_TOP_K", "7")
+    monkeypatch.delenv("LONG_TERM_MEMORY_CANDIDATE_K", raising=False)
 
     from qq_group_chatter.app import create_default_long_term_memory_service
 
     service = create_default_long_term_memory_service(mem0_client=NoopMem0Client())
 
     assert service._top_k == 7
+    assert service._candidate_k == 30
+
+
+def test_default_long_term_memory_service_reads_rerank_settings(monkeypatch):
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "secret")
+    monkeypatch.setenv("LONG_TERM_MEMORY_TOP_K", "7")
+    monkeypatch.setenv("LONG_TERM_MEMORY_CANDIDATE_K", "21")
+    monkeypatch.setenv("LONG_TERM_MEMORY_SEMANTIC_WEIGHT", "0.7")
+    monkeypatch.setenv("LONG_TERM_MEMORY_RECENCY_WEIGHT", "0.3")
+    monkeypatch.setenv("LONG_TERM_MEMORY_TIME_DECAY_DAYS", "45")
+
+    from qq_group_chatter.app import create_default_long_term_memory_service
+
+    service = create_default_long_term_memory_service(mem0_client=NoopMem0Client())
+
+    assert service._top_k == 7
+    assert service._candidate_k == 21
+    assert service._semantic_weight == 0.7
+    assert service._recency_weight == 0.3
+    assert service._time_decay_seconds == 45 * 24 * 60 * 60
+
+
+def test_default_long_term_memory_service_falls_back_for_invalid_rerank_settings(monkeypatch):
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "secret")
+    monkeypatch.setenv("LONG_TERM_MEMORY_CANDIDATE_K", "bad")
+    monkeypatch.setenv("LONG_TERM_MEMORY_SEMANTIC_WEIGHT", "bad")
+    monkeypatch.setenv("LONG_TERM_MEMORY_RECENCY_WEIGHT", "bad")
+    monkeypatch.setenv("LONG_TERM_MEMORY_TIME_DECAY_DAYS", "bad")
+
+    from qq_group_chatter.app import create_default_long_term_memory_service
+
+    service = create_default_long_term_memory_service(mem0_client=NoopMem0Client())
+
+    assert service._candidate_k == 30
+    assert service._semantic_weight == 0.85
+    assert service._recency_weight == 0.15
+    assert service._time_decay_seconds == 180 * 24 * 60 * 60
 
 
 def test_default_long_term_memory_service_can_disable_deepseek_thinking(monkeypatch):

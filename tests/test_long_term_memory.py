@@ -8,7 +8,9 @@ from qq_group_chatter.models import (
     LongTermMemoryBundle,
     LongTermMemoryIngestionJob,
     LongTermMemoryOperation,
+    LongTermMemoryPlanResult,
     LongTermMemoryRecord,
+    LongTermMemoryUsageUpdate,
     build_group_conversation_context,
     user_memory_id,
 )
@@ -99,9 +101,10 @@ class FakeMem0ClientWithVectorStore(FakeMem0Client):
 
 
 class FakePlanner:
-    def __init__(self, operations=None, raises=None):
+    def __init__(self, operations=None, raises=None, result=None):
         self.operations = operations or []
         self.raises = raises
+        self.result = result
         self.calls = []
 
     async def plan(
@@ -130,6 +133,8 @@ class FakePlanner:
         )
         if self.raises:
             raise self.raises
+        if self.result is not None:
+            return self.result
         return self.operations
 
 
@@ -224,9 +229,9 @@ async def test_search_queries_user_and_conversation_memories():
     assert mem0.search_calls[2] == {
         "query": "晚上吃川菜吗",
         "filters": {"user_id": "*", "conversation_id": "qq_group:888888"},
-        "top_k": 10,
+        "top_k": 30,
     }
-    assert [call["top_k"] for call in mem0.search_calls] == [10, 10, 10]
+    assert [call["top_k"] for call in mem0.search_calls] == [30, 30, 30]
 
 
 async def test_search_dedupes_global_memories_by_id():
@@ -321,6 +326,130 @@ async def test_search_does_not_query_legacy_user_owner():
         GROUP_USER_MEMORY_ID,
         "qq_conversation:qq_group:888888",
     ]
+
+
+async def test_search_reranks_by_semantic_score_and_recency_before_top_k():
+    mem0 = FakeMem0Client()
+    mem0.search_results = {
+        GROUP_USER_MEMORY_ID: [
+            {
+                "id": "old-strong",
+                "memory": "用户喜欢吃川菜",
+                "metadata": {
+                    "kind": "preference",
+                    "score": 0.93,
+                    "last_recalled_at": 100.0,
+                },
+            },
+            {
+                "id": "recent-close",
+                "memory": "用户最近说想吃辣",
+                "metadata": {
+                    "kind": "preference",
+                    "score": 0.91,
+                    "last_recalled_at": 123.0,
+                },
+            },
+            {
+                "id": "recent-weak",
+                "memory": "用户最近聊过饮料",
+                "metadata": {
+                    "kind": "preference",
+                    "score": 0.4,
+                    "last_recalled_at": 123.0,
+                },
+            },
+        ]
+    }
+    service = LongTermMemoryService(
+        mem0_client=mem0,
+        planner=FakePlanner(),
+        top_k=2,
+        candidate_k=3,
+        semantic_weight=0.85,
+        recency_weight=0.15,
+        time_decay_days=1 / 86400,
+    )
+
+    bundle = await service.search("晚上吃川菜吗", context())
+
+    assert [record.id for record in bundle.user_memories] == ["recent-close", "old-strong"]
+    assert mem0.search_calls[0]["top_k"] == 3
+
+
+async def test_search_rerank_uses_top_level_mem0_score():
+    mem0 = FakeMem0Client()
+    mem0.search_results = {
+        GROUP_USER_MEMORY_ID: [
+            {
+                "id": "old-strong",
+                "memory": "用户喜欢吃川菜",
+                "score": 0.93,
+                "metadata": {
+                    "kind": "preference",
+                    "last_recalled_at": 100.0,
+                },
+            },
+            {
+                "id": "recent-weak",
+                "memory": "用户最近聊过饮料",
+                "score": 0.4,
+                "metadata": {
+                    "kind": "preference",
+                    "last_recalled_at": 123.0,
+                },
+            },
+        ]
+    }
+    service = LongTermMemoryService(
+        mem0_client=mem0,
+        planner=FakePlanner(),
+        top_k=1,
+        candidate_k=2,
+        semantic_weight=0.85,
+        recency_weight=0.15,
+        time_decay_days=1 / 86400,
+    )
+
+    bundle = await service.search("晚上吃川菜吗", context())
+
+    assert [record.id for record in bundle.user_memories] == ["old-strong"]
+
+
+async def test_search_uses_fallback_memory_times_for_recency_rerank():
+    mem0 = FakeMem0Client()
+    mem0.search_results = {
+        GROUP_USER_MEMORY_ID: [
+            {
+                "id": "source-time",
+                "memory": "来源时间较新",
+                "metadata": {"score": 0.8, "source_created_at": 123.0},
+            },
+            {
+                "id": "seen-time",
+                "memory": "看见时间较新",
+                "metadata": {"score": 0.8, "last_seen_at": 123.0, "source_created_at": 1.0},
+            },
+            {
+                "id": "created-time",
+                "memory": "创建时间较旧",
+                "metadata": {"score": 0.8, "created_at": 1.0},
+            },
+        ]
+    }
+    service = LongTermMemoryService(
+        mem0_client=mem0,
+        planner=FakePlanner(),
+        top_k=2,
+        candidate_k=3,
+        semantic_weight=0.5,
+        recency_weight=0.5,
+        time_decay_days=1 / 86400,
+    )
+
+    bundle = await service.search("记忆", context())
+
+    assert [record.id for record in bundle.user_memories] == ["source-time", "seen-time"]
 
 
 def test_user_memory_owner_differs_between_group_and_private_conversations():
@@ -1067,6 +1196,186 @@ async def test_ingestion_skips_when_planner_returns_skip():
     assert mem0.update_calls == []
 
 
+async def test_ingestion_refreshes_usage_metadata_from_planner_result():
+    mem0 = FakeMem0Client()
+    planner = FakePlanner(
+        result=LongTermMemoryPlanResult(
+            operations=[],
+            usage_updates=[
+                LongTermMemoryUsageUpdate(
+                    scope="user",
+                    target_id="mem-user-1",
+                    confidence=0.91,
+                )
+            ],
+        )
+    )
+    service = LongTermMemoryService(mem0_client=mem0, planner=planner)
+    await service.start()
+
+    await service.enqueue_ingestion(
+        LongTermMemoryIngestionJob(
+            context=context(),
+            user_message="晚上吃川菜吗",
+            existing_memories=LongTermMemoryBundle(
+                user_memories=[
+                    LongTermMemoryRecord(
+                        id="mem-user-1",
+                        content="用户不吃辣",
+                        metadata={
+                            "source_created_at": 100.0,
+                            "last_seen_at": 110.0,
+                            "recall_count": 2,
+                            "kind": "preference",
+                            "created_at": 101.0,
+                            "updated_at": 102.0,
+                        },
+                    )
+                ],
+                conversation_memories=[],
+            ),
+        )
+    )
+    await asyncio.wait_for(service.join(), timeout=1)
+    await service.stop()
+
+    assert len(planner.calls) == 1
+    assert mem0.update_calls == [
+        {
+            "memory_id": "mem-user-1",
+            "data": "用户不吃辣",
+            "metadata": {
+                "source_created_at": 100.0,
+                "last_seen_at": 110.0,
+                "recall_count": 3,
+                "kind": "preference",
+                "last_recalled_at": 123.0,
+                "last_recalled_message_id": "m1",
+            },
+        }
+    ]
+
+
+async def test_ingestion_does_not_refresh_usage_for_memory_updated_in_same_plan():
+    mem0 = FakeMem0Client()
+    planner = FakePlanner(
+        result=LongTermMemoryPlanResult(
+            operations=[
+                LongTermMemoryOperation(
+                    action="update",
+                    scope="user",
+                    target_id="mem-user-1",
+                    content="用户现在能吃微辣",
+                    kind="preference",
+                    confidence=0.92,
+                )
+            ],
+            usage_updates=[
+                LongTermMemoryUsageUpdate(
+                    scope="user",
+                    target_id="mem-user-1",
+                    confidence=0.91,
+                )
+            ],
+        )
+    )
+    service = LongTermMemoryService(mem0_client=mem0, planner=planner)
+    await service.start()
+
+    await service.enqueue_ingestion(
+        LongTermMemoryIngestionJob(
+            context=context(),
+            user_message="我现在能吃微辣",
+            existing_memories=LongTermMemoryBundle(
+                user_memories=[
+                    LongTermMemoryRecord(
+                        id="mem-user-1",
+                        content="用户不吃辣",
+                        metadata={"source_created_at": 100.0, "kind": "preference"},
+                    )
+                ],
+                conversation_memories=[],
+            ),
+        )
+    )
+    await asyncio.wait_for(service.join(), timeout=1)
+    await service.stop()
+
+    assert [call["data"] for call in mem0.update_calls] == ["用户现在能吃微辣"]
+
+
+async def test_ingestion_does_not_refresh_usage_when_planner_returns_no_usage_updates():
+    mem0 = FakeMem0Client()
+    planner = FakePlanner(result=LongTermMemoryPlanResult(operations=[], usage_updates=[]))
+    service = LongTermMemoryService(mem0_client=mem0, planner=planner)
+    await service.start()
+
+    await service.enqueue_ingestion(
+        LongTermMemoryIngestionJob(
+            context=context(),
+            user_message="晚上吃川菜吗",
+            existing_memories=LongTermMemoryBundle(
+                user_memories=[
+                    LongTermMemoryRecord(id="mem-user-1", content="用户不吃辣", metadata={})
+                ],
+                conversation_memories=[],
+            ),
+        )
+    )
+    await asyncio.wait_for(service.join(), timeout=1)
+    await service.stop()
+
+    assert mem0.update_calls == []
+
+
+async def test_ingestion_records_usage_refresh_error_without_visible_notice(monkeypatch):
+    class UpdateFailingMem0Client(FakeMem0Client):
+        def update(self, memory_id, data, metadata=None):
+            super().update(memory_id, data, metadata=metadata)
+            raise RuntimeError("usage refresh failed")
+
+    mem0 = UpdateFailingMem0Client()
+    errors = []
+    monkeypatch.setattr(
+        "qq_group_chatter.services.long_term_memory.record_error",
+        lambda stage, exc: errors.append((stage, str(exc))),
+    )
+    planner = FakePlanner(
+        result=LongTermMemoryPlanResult(
+            operations=[],
+            usage_updates=[
+                LongTermMemoryUsageUpdate(
+                    scope="user",
+                    target_id="mem-user-1",
+                    confidence=0.91,
+                )
+            ],
+        )
+    )
+    service = LongTermMemoryService(mem0_client=mem0, planner=planner)
+    await service.start()
+
+    notice_calls = []
+    await service.enqueue_ingestion(
+        LongTermMemoryIngestionJob(
+            context=context(),
+            user_message="晚上吃川菜吗",
+            existing_memories=LongTermMemoryBundle(
+                user_memories=[
+                    LongTermMemoryRecord(id="mem-user-1", content="用户不吃辣", metadata={})
+                ],
+                conversation_memories=[],
+            ),
+            on_error_notice=lambda notice: notice_calls.append(notice),
+        )
+    )
+    await asyncio.wait_for(service.join(), timeout=1)
+    await service.stop()
+
+    assert errors == [("mem0_usage_update", "usage refresh failed")]
+    assert notice_calls == []
+
+
 async def test_ingestion_deletes_existing_memory_when_planner_returns_delete():
     mem0 = FakeMem0Client()
     planner = FakePlanner(
@@ -1538,17 +1847,17 @@ async def test_ingestion_falls_back_to_mem0_search_without_existing_memories():
         {
             "query": "这个群默认说中文",
             "filters": {"user_id": GROUP_USER_MEMORY_ID},
-            "top_k": 10,
+            "top_k": 30,
         },
         {
             "query": "这个群默认说中文",
             "filters": {"user_id": "qq_conversation:qq_group:888888"},
-            "top_k": 10,
+            "top_k": 30,
         },
         {
             "query": "这个群默认说中文",
             "filters": {"user_id": "*", "conversation_id": "qq_group:888888"},
-            "top_k": 10,
+            "top_k": 30,
         },
     ]
 

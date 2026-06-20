@@ -76,6 +76,38 @@ class LongTermMemoryOperation:
 
 
 @dataclass(frozen=True)
+class LongTermMemoryUsageUpdate:
+    scope: MemoryScope
+    target_id: str
+    confidence: float
+
+
+@dataclass(frozen=True)
+class LongTermMemoryPlanResult:
+    operations: list[LongTermMemoryOperation]
+    usage_updates: list[LongTermMemoryUsageUpdate] = field(default_factory=list)
+
+    def __iter__(self):
+        return iter(self.operations)
+
+    def __len__(self) -> int:
+        return len(self.operations)
+
+    def __getitem__(self, index):
+        return self.operations[index]
+
+    def __eq__(self, other: object) -> bool:
+        if isinstance(other, list):
+            return self.operations == other
+        if isinstance(other, LongTermMemoryPlanResult):
+            return (
+                self.operations == other.operations
+                and self.usage_updates == other.usage_updates
+            )
+        return super().__eq__(other)
+
+
+@dataclass(frozen=True)
 class LongTermMemoryBundle:
     user_memories: list[LongTermMemoryRecord]
     conversation_memories: list[LongTermMemoryRecord]

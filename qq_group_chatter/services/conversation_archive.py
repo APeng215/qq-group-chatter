@@ -25,8 +25,8 @@ class ConversationArchiveService:
         enabled: bool = True,
         top_k: int = 5,
         candidate_k: int = 20,
-        semantic_weight: float = 0.9,
-        recency_weight: float = 0.1,
+        semantic_weight: float = 0.85,
+        recency_weight: float = 0.15,
         time_decay_days: float = 90.0,
         max_messages_per_conversation: int = 5000,
     ):

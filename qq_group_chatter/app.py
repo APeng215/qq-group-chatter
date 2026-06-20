@@ -190,6 +190,10 @@ def create_default_long_term_memory_service(
         mem0_client=mem0_client or create_default_mem0_client(),
         planner=LongTermMemoryPlanner(llm=resolved_planner_llm),
         top_k=_read_int("LONG_TERM_MEMORY_TOP_K", 10),
+        candidate_k=_read_int("LONG_TERM_MEMORY_CANDIDATE_K", 30),
+        semantic_weight=_read_float("LONG_TERM_MEMORY_SEMANTIC_WEIGHT", 0.85),
+        recency_weight=_read_float("LONG_TERM_MEMORY_RECENCY_WEIGHT", 0.15),
+        time_decay_days=_read_float("LONG_TERM_MEMORY_TIME_DECAY_DAYS", 180.0),
     )
 
 
@@ -209,8 +213,8 @@ def create_default_conversation_archive_service(
         enabled=True,
         top_k=_read_int("CONVERSATION_ARCHIVE_TOP_K", 5),
         candidate_k=_read_int("CONVERSATION_ARCHIVE_CANDIDATE_K", 20),
-        semantic_weight=_read_float("CONVERSATION_ARCHIVE_SEMANTIC_WEIGHT", 0.9),
-        recency_weight=_read_float("CONVERSATION_ARCHIVE_RECENCY_WEIGHT", 0.1),
+        semantic_weight=_read_float("CONVERSATION_ARCHIVE_SEMANTIC_WEIGHT", 0.85),
+        recency_weight=_read_float("CONVERSATION_ARCHIVE_RECENCY_WEIGHT", 0.15),
         time_decay_days=_read_float("CONVERSATION_ARCHIVE_TIME_DECAY_DAYS", 90.0),
         max_messages_per_conversation=_read_int(
             "CONVERSATION_ARCHIVE_MAX_MESSAGES_PER_CONVERSATION",

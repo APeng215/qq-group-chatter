@@ -72,6 +72,10 @@ WEB_SEARCH_ENABLED=false
 MEM0_TELEMETRY=false
 MEM0_FASTEMBED_MODEL=BAAI/bge-small-zh-v1.5
 LONG_TERM_MEMORY_TOP_K=10
+LONG_TERM_MEMORY_CANDIDATE_K=30
+LONG_TERM_MEMORY_SEMANTIC_WEIGHT=0.85
+LONG_TERM_MEMORY_RECENCY_WEIGHT=0.15
+LONG_TERM_MEMORY_TIME_DECAY_DAYS=180
 
 # 短期记忆持久化；prompt 仍只读取最近 30 条
 SHORT_TERM_MEMORY_MAX_MESSAGES=300
@@ -82,8 +86,8 @@ CONVERSATION_ARCHIVE_ENABLED=true
 CONVERSATION_ARCHIVE_MAX_MESSAGES_PER_CONVERSATION=5000
 CONVERSATION_ARCHIVE_TOP_K=5
 CONVERSATION_ARCHIVE_CANDIDATE_K=20
-CONVERSATION_ARCHIVE_SEMANTIC_WEIGHT=0.9
-CONVERSATION_ARCHIVE_RECENCY_WEIGHT=0.1
+CONVERSATION_ARCHIVE_SEMANTIC_WEIGHT=0.85
+CONVERSATION_ARCHIVE_RECENCY_WEIGHT=0.15
 CONVERSATION_ARCHIVE_TIME_DECAY_DAYS=90
 
 # DeepSeek thinking 开关，默认开启；推荐 true / false，也兼容 enabled / disabled
@@ -209,6 +213,8 @@ http://127.0.0.1:8080/api/llm-traces
 - 会话记忆 ID：`qq_conversation:{conversation_id}`。
 - 只处理用户消息，不处理 assistant 回复。
 - 写入 Mem0 时使用 `infer=False`，由项目自己的 planner 决定 add/update/skip。
+- 召回时先从 Mem0 获取候选，再按语义分和长期记忆最近使用/更新时间做时间衰减重排。
+- 回复发送成功后的长期记忆 planner 仍只调用一次；同一次结果里可用 `usage_updates` 标记本轮明显用到的记忆，后台异步刷新 `last_recalled_at` 和 `recall_count`。
 - Mem0 查询必须带 `user_id`、`agent_id`、`run_id` 之一；同会话全局相关记忆查询使用 `{"user_id": "*", "conversation_id": context.conversation_id}`，再由项目代码过滤和去重。
 - 不提取手机号、密码、token、API key、地址等敏感内容。
 

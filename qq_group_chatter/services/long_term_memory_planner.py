@@ -9,7 +9,9 @@ from qq_group_chatter.models import (
     ConversationArchiveRecord,
     ConversationContext,
     LongTermMemoryOperation,
+    LongTermMemoryPlanResult,
     LongTermMemoryRecord,
+    LongTermMemoryUsageUpdate,
     MemoryKind,
     MemoryMergeAction,
     MemoryScope,
@@ -39,10 +41,12 @@ class LongTermMemoryPlanner:
         llm: Any | None = None,
         min_confidence: float = 0.8,
         max_writable_operations: int = 2,
+        max_usage_updates: int = 5,
     ):
         self._llm = llm
         self._min_confidence = min_confidence
         self._max_writable_operations = max_writable_operations
+        self._max_usage_updates = max_usage_updates
 
     async def plan(
         self,
@@ -55,9 +59,9 @@ class LongTermMemoryPlanner:
         short_term_messages: list[ChatMessage] | None = None,
         conversation_archive: list[ConversationArchiveRecord] | None = None,
         assistant_reply: str | None = None,
-    ) -> list[LongTermMemoryOperation]:
+    ) -> LongTermMemoryPlanResult:
         if self._llm is None:
-            return []
+            return LongTermMemoryPlanResult(operations=[])
         resolved_global_memories = global_memories or []
 
         prompt = self._build_prompt(
@@ -88,7 +92,7 @@ class LongTermMemoryPlanner:
                 )
             except TypeError:
                 raw = await self._llm.ainvoke(_combined_prompt(prompt))
-        return self._parse_operations(
+        return self._parse_plan_result(
             raw,
             user_memories=user_memories,
             conversation_memories=conversation_memories,
@@ -123,20 +127,20 @@ class LongTermMemoryPlanner:
             global_memories_json=_records_json(global_memories),
         )
 
-    def _parse_operations(
+    def _parse_plan_result(
         self,
         raw: Any,
         *,
         user_memories: list[LongTermMemoryRecord],
         conversation_memories: list[LongTermMemoryRecord],
         global_memories: list[LongTermMemoryRecord],
-    ) -> list[LongTermMemoryOperation]:
+    ) -> LongTermMemoryPlanResult:
         data = _loads_json_object(raw)
         if not isinstance(data, dict):
-            return []
+            return LongTermMemoryPlanResult(operations=[])
         items = data.get("operations")
         if not isinstance(items, list):
-            return []
+            items = []
 
         valid_ids_by_scope = {
             "user": {
@@ -168,7 +172,16 @@ class LongTermMemoryPlanner:
                     continue
                 writable_count += 1
             operations.append(operation)
-        return operations
+        usage_updates = _parse_usage_updates(
+            data.get("usage_updates"),
+            min_confidence=self._min_confidence,
+            valid_ids_by_scope=valid_ids_by_scope,
+            max_usage_updates=self._max_usage_updates,
+        )
+        return LongTermMemoryPlanResult(
+            operations=operations,
+            usage_updates=usage_updates,
+        )
 
 
 def _records_json(records: list[LongTermMemoryRecord]) -> str:
@@ -299,6 +312,63 @@ def _parse_operation(
         target_id=target_id or None,
         content=content,
         kind=kind,  # type: ignore[arg-type]
+        confidence=confidence,
+    )
+
+
+def _parse_usage_updates(
+    items: Any,
+    *,
+    min_confidence: float,
+    valid_ids_by_scope: dict[str, set[str]],
+    max_usage_updates: int,
+) -> list[LongTermMemoryUsageUpdate]:
+    if not isinstance(items, list):
+        return []
+    usage_updates: list[LongTermMemoryUsageUpdate] = []
+    for item in items:
+        update = _parse_usage_update(
+            item,
+            min_confidence=min_confidence,
+            valid_ids_by_scope=valid_ids_by_scope,
+        )
+        if update is None:
+            continue
+        usage_updates.append(update)
+        if len(usage_updates) >= max_usage_updates:
+            break
+    return usage_updates
+
+
+def _parse_usage_update(
+    item: Any,
+    *,
+    min_confidence: float,
+    valid_ids_by_scope: dict[str, set[str]],
+) -> LongTermMemoryUsageUpdate | None:
+    if not isinstance(item, dict):
+        return None
+
+    scope = str(item.get("scope", "")).strip().lower()
+    target_id = item.get("target_id")
+    try:
+        confidence = float(item.get("confidence", 0))
+    except (TypeError, ValueError):
+        return None
+
+    if scope not in VALID_SCOPES:
+        return None
+    if confidence < min_confidence:
+        return None
+    if target_id is None:
+        return None
+    resolved_target_id = str(target_id).strip()
+    if not resolved_target_id or resolved_target_id not in valid_ids_by_scope[scope]:
+        return None
+
+    return LongTermMemoryUsageUpdate(
+        scope=scope,  # type: ignore[arg-type]
+        target_id=resolved_target_id,
         confidence=confidence,
     )
 

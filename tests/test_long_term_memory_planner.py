@@ -2,7 +2,9 @@ from qq_group_chatter.models import (
     ChatMessage,
     ConversationArchiveRecord,
     LongTermMemoryOperation,
+    LongTermMemoryPlanResult,
     LongTermMemoryRecord,
+    LongTermMemoryUsageUpdate,
     build_group_conversation_context,
 )
 from qq_group_chatter.services.long_term_memory_planner import (
@@ -559,3 +561,181 @@ async def test_planner_rejects_global_target_id_with_wrong_scope():
     )
 
     assert operations == []
+
+
+async def test_planner_parses_usage_updates_with_operations_from_single_response():
+    planner = LongTermMemoryPlanner(
+        llm=FakePlannerLLM(
+            {
+                "operations": [
+                    {
+                        "action": "skip",
+                        "scope": "user",
+                        "content": "无需更新事实",
+                        "kind": "other",
+                        "confidence": 0.9,
+                    }
+                ],
+                "usage_updates": [
+                    {
+                        "scope": "user",
+                        "target_id": "mem-user-1",
+                        "confidence": 0.86,
+                    },
+                    {
+                        "scope": "conversation",
+                        "target_id": "mem-conv-1",
+                        "confidence": 0.91,
+                    },
+                ],
+            }
+        )
+    )
+
+    result = await planner.plan(
+        user_message="晚上吃川菜行吗？",
+        context=context(),
+        user_memories=user_records(),
+        conversation_memories=conversation_records(),
+        global_memories=[],
+    )
+
+    assert result == LongTermMemoryPlanResult(
+        operations=[
+            LongTermMemoryOperation(
+                action="skip",
+                scope="user",
+                target_id=None,
+                content="无需更新事实",
+                kind="other",
+                confidence=0.9,
+            )
+        ],
+        usage_updates=[
+            LongTermMemoryUsageUpdate(
+                scope="user",
+                target_id="mem-user-1",
+                confidence=0.86,
+            ),
+            LongTermMemoryUsageUpdate(
+                scope="conversation",
+                target_id="mem-conv-1",
+                confidence=0.91,
+            ),
+        ],
+    )
+
+
+async def test_planner_keeps_usage_updates_separate_from_writable_operation_limit():
+    planner = LongTermMemoryPlanner(
+        llm=FakePlannerLLM(
+            {
+                "operations": [
+                    {
+                        "action": "add",
+                        "scope": "user",
+                        "content": "第一条",
+                        "kind": "other",
+                        "confidence": 0.9,
+                    },
+                    {
+                        "action": "add",
+                        "scope": "user",
+                        "content": "第二条",
+                        "kind": "other",
+                        "confidence": 0.9,
+                    },
+                    {
+                        "action": "add",
+                        "scope": "user",
+                        "content": "第三条",
+                        "kind": "other",
+                        "confidence": 0.9,
+                    },
+                ],
+                "usage_updates": [
+                    {"scope": "user", "target_id": "mem-user-1", "confidence": 0.9},
+                    {"scope": "conversation", "target_id": "mem-conv-1", "confidence": 0.9},
+                ],
+            }
+        ),
+        max_writable_operations=2,
+    )
+
+    result = await planner.plan(
+        user_message="记住三件事，也用了已有记忆",
+        context=context(),
+        user_memories=user_records(),
+        conversation_memories=conversation_records(),
+        global_memories=[],
+    )
+
+    assert [operation.content for operation in result.operations] == ["第一条", "第二条"]
+    assert result.usage_updates == [
+        LongTermMemoryUsageUpdate(scope="user", target_id="mem-user-1", confidence=0.9),
+        LongTermMemoryUsageUpdate(
+            scope="conversation",
+            target_id="mem-conv-1",
+            confidence=0.9,
+        ),
+    ]
+
+
+async def test_planner_rejects_invalid_usage_updates_and_limits_to_five():
+    planner = LongTermMemoryPlanner(
+        llm=FakePlannerLLM(
+            {
+                "operations": [],
+                "usage_updates": [
+                    {"scope": "user", "target_id": "missing", "confidence": 0.9},
+                    {"scope": "conversation", "target_id": "mem-user-1", "confidence": 0.9},
+                    {"scope": "user", "target_id": "mem-user-1", "confidence": 0.2},
+                    {"scope": "user", "target_id": "mem-user-1", "confidence": 0.81},
+                    {"scope": "conversation", "target_id": "mem-conv-1", "confidence": 0.82},
+                    {"scope": "user", "target_id": "mem-global-user-1", "confidence": 0.83},
+                    {
+                        "scope": "conversation",
+                        "target_id": "mem-global-conv-1",
+                        "confidence": 0.84,
+                    },
+                    {"scope": "user", "target_id": "mem-user-1", "confidence": 0.85},
+                    {"scope": "conversation", "target_id": "mem-conv-1", "confidence": 0.86},
+                ],
+            }
+        ),
+        max_usage_updates=5,
+    )
+
+    result = await planner.plan(
+        user_message="这些记忆都用到了",
+        context=context(),
+        user_memories=user_records(),
+        conversation_memories=conversation_records(),
+        global_memories=global_records(),
+    )
+
+    assert result.usage_updates == [
+        LongTermMemoryUsageUpdate(scope="user", target_id="mem-user-1", confidence=0.81),
+        LongTermMemoryUsageUpdate(
+            scope="conversation",
+            target_id="mem-conv-1",
+            confidence=0.82,
+        ),
+        LongTermMemoryUsageUpdate(
+            scope="user",
+            target_id="mem-global-user-1",
+            confidence=0.83,
+        ),
+        LongTermMemoryUsageUpdate(
+            scope="conversation",
+            target_id="mem-global-conv-1",
+            confidence=0.84,
+        ),
+        LongTermMemoryUsageUpdate(scope="user", target_id="mem-user-1", confidence=0.85),
+    ]
+
+
+def test_planner_system_prompt_describes_usage_updates_contract():
+    assert "usage_updates" in PLANNER_SYSTEM_PROMPT
+    assert "不要仅因为某条记忆出现在上下文里就加入 usage_updates" in PLANNER_SYSTEM_PROMPT
+    assert "明显依赖、应用或确认" in PLANNER_SYSTEM_PROMPT

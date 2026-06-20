@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import math
 import re
 from difflib import SequenceMatcher
 from typing import Any
@@ -11,7 +12,9 @@ from qq_group_chatter.models import (
     LongTermMemoryBundle,
     LongTermMemoryIngestionJob,
     LongTermMemoryOperation,
+    LongTermMemoryPlanResult,
     LongTermMemoryRecord,
+    LongTermMemoryUsageUpdate,
     conversation_memory_id,
     user_memory_id,
 )
@@ -55,6 +58,10 @@ class LongTermMemoryService:
         max_operations_per_message: int = 2,
         max_records_per_scope: int = 50,
         top_k: int = 10,
+        candidate_k: int = 30,
+        semantic_weight: float = 0.85,
+        recency_weight: float = 0.15,
+        time_decay_days: float = 180.0,
     ):
         self._mem0 = mem0_client
         self._planner = planner
@@ -63,6 +70,10 @@ class LongTermMemoryService:
         self._max_operations_per_message = max_operations_per_message
         self._max_records_per_scope = max_records_per_scope
         self._top_k = max(1, int(top_k))
+        self._candidate_k = max(self._top_k, int(candidate_k))
+        self._semantic_weight = float(semantic_weight)
+        self._recency_weight = float(recency_weight)
+        self._time_decay_seconds = max(1.0, float(time_decay_days) * 24 * 60 * 60)
         self._queue: asyncio.Queue[LongTermMemoryIngestionJob | None] = asyncio.Queue()
         self._worker: asyncio.Task[None] | None = None
 
@@ -92,20 +103,44 @@ class LongTermMemoryService:
                 user_message,
                 user_memory_id(context),
                 "user",
-                limit=self._top_k,
+                limit=self._candidate_k,
             ),
             self._search_scope(
                 user_message,
                 conversation_memory_id(context),
                 "conversation",
-                limit=self._top_k,
+                limit=self._candidate_k,
             ),
-            self._search_conversation_global(user_message, context, limit=self._top_k),
+            self._search_conversation_global(user_message, context, limit=self._candidate_k),
+        )
+        user_memories = _rerank_memories(
+            user_memories,
+            limit=self._top_k,
+            now=context.timestamp,
+            semantic_weight=self._semantic_weight,
+            recency_weight=self._recency_weight,
+            time_decay_seconds=self._time_decay_seconds,
+        )
+        conversation_memories = _rerank_memories(
+            conversation_memories,
+            limit=self._top_k,
+            now=context.timestamp,
+            semantic_weight=self._semantic_weight,
+            recency_weight=self._recency_weight,
+            time_decay_seconds=self._time_decay_seconds,
         )
         global_memories = _dedupe_global_memories(
             _filter_conversation_global_memories(global_memories, context),
             user_memories,
             conversation_memories,
+        )
+        global_memories = _rerank_memories(
+            global_memories,
+            limit=self._top_k,
+            now=context.timestamp,
+            semantic_weight=self._semantic_weight,
+            recency_weight=self._recency_weight,
+            time_decay_seconds=self._time_decay_seconds,
         )
         return LongTermMemoryBundle(
             user_memories=user_memories,
@@ -162,7 +197,7 @@ class LongTermMemoryService:
         if existing_memories is None:
             existing_memories = await self.search(job.user_message, job.context)
         try:
-            planned_operations = await self._planner.plan(
+            plan_result = await self._planner.plan(
                 user_message=job.user_message,
                 context=job.context,
                 user_memories=existing_memories.user_memories,
@@ -187,6 +222,8 @@ class LongTermMemoryService:
             conversation_memories=list(existing_memories.conversation_memories),
             global_memories=list(existing_memories.global_memories),
         )
+        planned_operations, usage_updates = _split_plan_result(plan_result)
+        mutated_memory_ids: set[str] = set()
         for operation in planned_operations:
             if not self._is_valid_operation(operation):
                 notice = await self._ingest_operation(operation, job, known_records)
@@ -200,8 +237,16 @@ class LongTermMemoryService:
             if isinstance(ingested, ErrorNoticeContext):
                 first_notice = first_notice or ingested
                 continue
+            if operation.action in {"update", "delete"} and operation.target_id:
+                mutated_memory_ids.add(operation.target_id)
             if ingested is not None:
                 self._remember_ingested_record(known_records, ingested)
+        await self._refresh_usage_updates(
+            usage_updates,
+            job,
+            known_records,
+            skip_memory_ids=mutated_memory_ids,
+        )
         return first_notice
 
     async def _ingest_operation(
@@ -364,6 +409,32 @@ class LongTermMemoryService:
             record_error("mem0_delete", exc)
             return _visible_memory_error("mem0_delete", exc)
         return None
+
+    async def _refresh_usage_updates(
+        self,
+        usage_updates: list[LongTermMemoryUsageUpdate],
+        job: LongTermMemoryIngestionJob,
+        existing_memories: LongTermMemoryBundle,
+        skip_memory_ids: set[str],
+    ) -> None:
+        for usage_update in usage_updates:
+            if usage_update.target_id in skip_memory_ids:
+                continue
+            record = _find_record(
+                self._existing_records_for_scope(usage_update.scope, existing_memories) or [],
+                usage_update.target_id,
+            )
+            if record is None or record.id is None:
+                continue
+            try:
+                await asyncio.to_thread(
+                    self._mem0.update,
+                    record.id,
+                    record.content,
+                    metadata=_memory_usage_metadata(record.metadata, job),
+                )
+            except Exception as exc:
+                record_error("mem0_usage_update", exc)
 
     async def _prune_old_memories(self, target_id: str, scope: str) -> ErrorNoticeContext | None:
         if self._max_records_per_scope <= 0:
@@ -543,6 +614,14 @@ def normalize_mem0_memories(raw: Any) -> list[str]:
     return [record.content for record in normalize_mem0_records(raw)]
 
 
+def _split_plan_result(
+    result: Any,
+) -> tuple[list[LongTermMemoryOperation], list[LongTermMemoryUsageUpdate]]:
+    if isinstance(result, LongTermMemoryPlanResult):
+        return result.operations, result.usage_updates
+    return list(result or []), []
+
+
 def _normalize_mem0_record(item: dict[str, Any]) -> LongTermMemoryRecord | None:
     payload = item.get("payload")
     if isinstance(payload, dict):
@@ -638,6 +717,43 @@ def _is_current_conversation_owner(
     return owner.startswith(f"qq_user:{context.conversation_id}:") or owner == conversation_memory_id(context)
 
 
+def _rerank_memories(
+    records: list[LongTermMemoryRecord],
+    *,
+    limit: int,
+    now: float,
+    semantic_weight: float,
+    recency_weight: float,
+    time_decay_seconds: float,
+) -> list[LongTermMemoryRecord]:
+    return sorted(
+        records,
+        key=lambda record: _memory_rerank_score(
+            record,
+            now=now,
+            semantic_weight=semantic_weight,
+            recency_weight=recency_weight,
+            time_decay_seconds=time_decay_seconds,
+        ),
+        reverse=True,
+    )[:limit]
+
+
+def _memory_rerank_score(
+    record: LongTermMemoryRecord,
+    *,
+    now: float,
+    semantic_weight: float,
+    recency_weight: float,
+    time_decay_seconds: float,
+) -> float:
+    semantic = _record_score(record)
+    memory_time = _record_memory_time(record)
+    age = max(0.0, now - memory_time)
+    recency = math.exp(-age / time_decay_seconds) if memory_time > 0 else 0.0
+    return semantic_weight * semantic + recency_weight * recency
+
+
 def _new_memory_metadata(
     operation: LongTermMemoryOperation,
     job: LongTermMemoryIngestionJob,
@@ -663,6 +779,25 @@ def _memory_update_metadata(metadata: dict[str, object]) -> dict[str, object]:
     return cleaned
 
 
+def _memory_usage_metadata(
+    metadata: dict[str, object],
+    job: LongTermMemoryIngestionJob,
+) -> dict[str, object]:
+    return {
+        **_memory_update_metadata(metadata),
+        "last_recalled_at": job.context.timestamp,
+        "last_recalled_message_id": job.context.message_id,
+        "recall_count": _increment_recall_count(metadata.get("recall_count")),
+    }
+
+
+def _increment_recall_count(value: object) -> int:
+    try:
+        return int(value) + 1
+    except (TypeError, ValueError):
+        return 1
+
+
 def _display_nickname(nickname: str | None) -> str:
     if nickname is None:
         return "未设置"
@@ -676,6 +811,23 @@ def _record_created_at(record: LongTermMemoryRecord) -> float:
         return float(value)
     except (TypeError, ValueError):
         return float("-inf")
+
+
+def _record_memory_time(record: LongTermMemoryRecord) -> float:
+    for key in ("last_recalled_at", "last_seen_at", "source_created_at", "created_at"):
+        value = record.metadata.get(key)
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            continue
+    return 0.0
+
+
+def _record_score(record: LongTermMemoryRecord) -> float:
+    try:
+        return float(record.metadata.get("score", 0.0))
+    except (TypeError, ValueError):
+        return 0.0
 
 
 def _normalize_text(value: str) -> str:

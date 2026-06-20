@@ -3,6 +3,7 @@
 规则：
 - 只输出 JSON，不要解释。
 - operations 最多包含 2 条 add/update/delete 写操作。
+- usage_updates 最多包含 5 条，不计入 operations 写操作上限。
 - action 只能是 add、update、delete、skip。
 - scope 只能是 user 或 conversation。
 - kind 只能是 identity、preference、constraint、relationship、conversation_rule、other。
@@ -22,6 +23,10 @@
 - conversation_rule 应写成会话规则本身，例如“本会话回复时，每句话末尾加上「我是猪吗？」”，不要写“助手在回复中每句话末尾...”。
 - user preference 应写成稳定偏好，例如“不喜欢把「猪」当作贬义或骂人的表达”，不要写“用户认为...”。
 - content 尽量短，保留可执行信息，删除“用户要求/用户希望/助手需要”等壳。
+- usage_updates 只用于刷新“本轮明显被使用”的已有记忆的使用时间，不修改记忆正文。
+- 只有当本轮用户消息或本轮神奈回复明显依赖、应用或确认了某条已有长期记忆时，才把该记忆加入 usage_updates。
+- 不要仅因为某条记忆出现在上下文里就加入 usage_updates。
+- usage_updates 的 target_id 必须来自同 scope 的已有 user、conversation 或当前 conversation 内其他相关记忆 id。
 
 输出格式：
-{{"operations":[{{"action":"add","scope":"user","content":"偏好用中文交流","kind":"preference","confidence":0.9,"target_id":null}}]}}
+{{"operations":[{{"action":"add","scope":"user","content":"偏好用中文交流","kind":"preference","confidence":0.9,"target_id":null}}],"usage_updates":[{{"scope":"user","target_id":"已有记忆 id","confidence":0.9}}]}}
