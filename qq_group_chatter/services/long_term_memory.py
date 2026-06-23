@@ -453,7 +453,7 @@ class LongTermMemoryService:
         overflow = len(records) - self._max_records_per_scope
         if overflow <= 0:
             return None
-        sorted_records = sorted(records, key=_record_created_at)
+        sorted_records = sorted(records, key=_record_prune_time)
         for record in sorted_records[:overflow]:
             if record.id is not None:
                 notice = await self._delete_memory(record.id, scope)
@@ -811,6 +811,16 @@ def _record_created_at(record: LongTermMemoryRecord) -> float:
         return float(value)
     except (TypeError, ValueError):
         return float("-inf")
+
+
+def _record_prune_time(record: LongTermMemoryRecord) -> float:
+    for key in ("last_recalled_at", "last_seen_at", "source_created_at", "created_at"):
+        value = record.metadata.get(key)
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            continue
+    return float("-inf")
 
 
 def _record_memory_time(record: LongTermMemoryRecord) -> float:

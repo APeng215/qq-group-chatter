@@ -1724,25 +1724,25 @@ async def test_planner_errors_do_not_write_memories(monkeypatch):
     assert recorded_errors == [{"stage": "long_term_memory_planner", "exc": error}]
 
 
-async def test_prunes_oldest_memories_when_scope_exceeds_limit():
+async def test_prunes_least_recently_used_memories_when_scope_exceeds_limit():
     mem0 = FakeMem0Client()
     mem0.get_all_results = {
         GROUP_USER_MEMORY_ID: {
             "results": [
                 {
-                    "id": "oldest",
-                    "memory": "最旧记忆",
-                    "metadata": {"created_at": 1.0},
+                    "id": "old-but-recalled",
+                    "memory": "很早创建但最近召回的记忆",
+                    "metadata": {"created_at": 1.0, "last_recalled_at": 100.0},
                 },
                 {
-                    "id": "newer",
-                    "memory": "较新记忆",
+                    "id": "never-used",
+                    "memory": "较新但从未再次使用的记忆",
                     "metadata": {"created_at": 2.0},
                 },
                 {
-                    "id": "newest",
-                    "memory": "最新记忆",
-                    "metadata": {"created_at": 3.0},
+                    "id": "recently-updated",
+                    "memory": "最近更新的记忆",
+                    "metadata": {"created_at": 3.0, "last_seen_at": 90.0},
                 },
             ]
         }
@@ -1772,7 +1772,58 @@ async def test_prunes_oldest_memories_when_scope_exceeds_limit():
     await asyncio.wait_for(service.join(), timeout=1)
     await service.stop()
 
-    assert mem0.delete_calls == [{"memory_id": "oldest"}]
+    assert mem0.delete_calls == [{"memory_id": "never-used"}]
+
+
+async def test_prune_uses_recall_time_before_seen_and_created_time():
+    mem0 = FakeMem0Client()
+    mem0.get_all_results = {
+        GROUP_USER_MEMORY_ID: {
+            "results": [
+                {
+                    "id": "older-recalled",
+                    "memory": "被召回过的旧记忆",
+                    "metadata": {"created_at": 1.0, "last_recalled_at": 30.0},
+                },
+                {
+                    "id": "newer-seen",
+                    "memory": "较新但只更新过的记忆",
+                    "metadata": {"created_at": 20.0, "last_seen_at": 20.0},
+                },
+                {
+                    "id": "newest-created",
+                    "memory": "最新创建但没使用过的记忆",
+                    "metadata": {"created_at": 40.0},
+                },
+            ]
+        }
+    }
+    planner = FakePlanner(
+        [
+            LongTermMemoryOperation(
+                action="add",
+                scope="user",
+                target_id=None,
+                content="新增记忆",
+                kind="other",
+                confidence=0.92,
+            )
+        ]
+    )
+    service = LongTermMemoryService(
+        mem0_client=mem0,
+        planner=planner,
+        max_records_per_scope=2,
+    )
+    await service.start()
+
+    await service.enqueue_ingestion(
+        LongTermMemoryIngestionJob(context=context(), user_message="记住这个")
+    )
+    await asyncio.wait_for(service.join(), timeout=1)
+    await service.stop()
+
+    assert mem0.delete_calls == [{"memory_id": "newer-seen"}]
 
 
 async def test_does_not_prune_when_scope_is_within_limit():

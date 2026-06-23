@@ -434,7 +434,7 @@ def _format_conversation_archive(records: list[ConversationArchiveRecord]) -> st
     lines = [
         "相关历史对话（语义召回，仅表示过去说过，不代表当前事实仍成立）："
     ]
-    for record in records:
+    for record in _sort_conversation_archive_for_prompt(records):
         speaker = _format_archive_speaker(record)
         timestamp = format_time_text(record.timestamp)
         if timestamp is None:
@@ -442,6 +442,31 @@ def _format_conversation_archive(records: list[ConversationArchiveRecord]) -> st
         else:
             lines.append(f"- [{timestamp}] {speaker} {record.content}")
     return "\n".join(lines)
+
+
+def _sort_conversation_archive_for_prompt(
+    records: list[ConversationArchiveRecord],
+) -> list[ConversationArchiveRecord]:
+    return [
+        record
+        for _, record in sorted(
+            enumerate(records),
+            key=lambda item: _conversation_archive_prompt_sort_key(item[0], item[1]),
+        )
+    ]
+
+
+def _conversation_archive_prompt_sort_key(
+    index: int,
+    record: ConversationArchiveRecord,
+) -> tuple[int, float, int]:
+    try:
+        timestamp = float(record.timestamp)
+    except (TypeError, ValueError):
+        return (0, 0.0, index)
+    if timestamp <= 0:
+        return (0, 0.0, index)
+    return (1, timestamp, index)
 
 
 def _format_archive_speaker(record: ConversationArchiveRecord) -> str:

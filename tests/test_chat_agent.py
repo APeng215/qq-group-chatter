@@ -324,6 +324,55 @@ def test_chat_agent_prompt_includes_conversation_archive_when_available():
     assert prompt.index("相关历史对话") < prompt.index("短期会话上下文")
 
 
+def test_chat_agent_prompt_renders_conversation_archive_chronologically():
+    agent = ChatAgent()
+    context = build_group_conversation_context(
+        group_id=888888,
+        user_id=123456,
+        message_id="m2",
+        nickname="阿咳",
+        timestamp=123.0,
+    )
+
+    prompt = agent._build_prompt(
+        user_message="后来呢？",
+        context=context,
+        short_term_messages=[],
+        long_term_memory=LongTermMemoryBundle(user_memories=[], conversation_memories=[]),
+        conversation_archive=[
+            ConversationArchiveRecord(
+                content="第三句",
+                role="user",
+                user_id="123456",
+                nickname="阿咳",
+                message_id="old-3",
+                timestamp=1781762460.0,
+                score=0.98,
+            ),
+            ConversationArchiveRecord(
+                content="第一句",
+                role="user",
+                user_id="123456",
+                nickname="阿咳",
+                message_id="old-1",
+                timestamp=1781762340.0,
+                score=0.92,
+            ),
+            ConversationArchiveRecord(
+                content="第二句",
+                role="assistant",
+                user_id=None,
+                nickname="神奈",
+                message_id="old-2",
+                timestamp=1781762400.0,
+                score=0.95,
+            ),
+        ],
+    )
+
+    assert prompt.index("第一句") < prompt.index("第二句") < prompt.index("第三句")
+
+
 class TraceContextLLM:
     def __init__(self, response):
         self.response = response
@@ -770,6 +819,50 @@ async def test_chat_agent_builds_grounded_search_prompt_with_chat_context():
     assert "群聊回复会被群内其他成员看到" not in prompt
     assert "短期上下文中较新的明确要求优先于较早的会话长期记忆" not in prompt
     assert "https://example.com/news" not in prompt
+
+
+async def test_grounded_search_prompt_renders_conversation_archive_chronologically():
+    llm = RecordingLLM()
+    agent = ChatAgent(llm=llm)
+    context = build_group_conversation_context(
+        group_id=888888,
+        user_id=123456,
+        message_id="m1",
+        nickname="阿咳",
+        timestamp=123.0,
+    )
+
+    await agent.generate_grounded_search_reply(
+        user_message="帮我查查，然后接着说",
+        search_query="测试",
+        search_sources=[],
+        context=context,
+        short_term_messages=[],
+        long_term_memory=LongTermMemoryBundle(user_memories=[], conversation_memories=[]),
+        conversation_archive=[
+            ConversationArchiveRecord(
+                content="较新的历史",
+                role="user",
+                user_id="123456",
+                nickname="阿咳",
+                message_id="archive-2",
+                timestamp=1781762400.0,
+                score=0.99,
+            ),
+            ConversationArchiveRecord(
+                content="较旧的历史",
+                role="user",
+                user_id="123456",
+                nickname="阿咳",
+                message_id="archive-1",
+                timestamp=1781762340.0,
+                score=0.91,
+            ),
+        ],
+    )
+
+    prompt = llm.prompts[0]
+    assert prompt.index("较旧的历史") < prompt.index("较新的历史")
 
 
 async def test_grounded_search_prompt_includes_current_time_and_timed_short_term_history(monkeypatch):
