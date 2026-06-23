@@ -25,6 +25,7 @@ class DeepSeekChatLLM:
     base_url: str = "https://api.deepseek.com"
     client: Any | None = None
     trace_store: Any | None = None
+    last_trace_id: str | None = None
 
     def __post_init__(self) -> None:
         if self.client is not None:
@@ -83,7 +84,11 @@ class DeepSeekChatLLM:
                 temperature=self.temperature,
                 response_format=resolved_response_format,
                 messages=messages,
+                current_user_message=_clean_trace_value(
+                    context.get("current_user_message")
+                ),
             )
+            self.last_trace_id = trace_id
         try:
             response = await self.client.chat.completions.create(**params)
         except Exception as exc:
@@ -181,3 +186,10 @@ def _message_value(message: Any, key: str) -> str | None:
     if value is None:
         return None
     return str(value)
+
+
+def _clean_trace_value(value: Any) -> str | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None

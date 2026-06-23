@@ -211,6 +211,13 @@ def test_memory_dashboard_html_renders_trace_reasoning_content():
     assert "${renderTraceReasoning(item)}" in html
 
 
+def test_memory_dashboard_html_renders_trace_current_user_message():
+    html = memory_dashboard_html({"summary": {"total": 0}, "memories": [], "errors": []})
+
+    assert "用户发言" in html
+    assert "item.current_user_message" in html
+
+
 def test_memory_dashboard_html_labels_average_duration_as_chat_only():
     html = memory_dashboard_html({"summary": {"total": 0}, "memories": [], "errors": []})
 
@@ -265,6 +272,15 @@ def test_memory_dashboard_html_adds_trace_copy_actions():
     assert "复制 ID" in html
     assert "复制响应" in html
     assert "traceListEl.addEventListener" in html
+
+
+def test_memory_dashboard_html_renders_final_trace_result():
+    html = memory_dashboard_html({"summary": {"total": 0}, "memories": [], "errors": []})
+
+    assert "function renderTraceResult" in html
+    assert "最终输出 / 解析结果" in html
+    assert "final_reply" in html
+    assert "fallback_reason" in html
 
 
 async def test_llm_trace_dashboard_api_returns_snapshot_and_clear_response():

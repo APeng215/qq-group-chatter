@@ -46,23 +46,25 @@ class LLMTraceStore:
         temperature: float,
         response_format: dict[str, Any] | None,
         messages: list[dict[str, Any]],
+        current_user_message: str | None = None,
     ) -> str:
         trace_id = uuid.uuid4().hex
-        self._append_event(
-            {
-                "event": "start",
-                "trace_id": trace_id,
-                "created_at": _now_iso(),
-                "component": component,
-                "operation": operation,
-                "model": model,
-                "thinking": thinking,
-                "temperature": temperature,
-                "response_format": response_format,
-                "messages": messages,
-                "status": "running",
-            }
-        )
+        event = {
+            "event": "start",
+            "trace_id": trace_id,
+            "created_at": _now_iso(),
+            "component": component,
+            "operation": operation,
+            "model": model,
+            "thinking": thinking,
+            "temperature": temperature,
+            "response_format": response_format,
+            "messages": messages,
+            "status": "running",
+        }
+        if current_user_message:
+            event["current_user_message"] = current_user_message
+        self._append_event(event)
         return trace_id
 
     def record_success(
@@ -105,6 +107,32 @@ class LLMTraceStore:
                 "error_message": sanitize_log_text(str(error)),
             }
         )
+
+    def record_result(
+        self,
+        *,
+        trace_id: str,
+        parsed_action: str,
+        final_reply: str | None = None,
+        fallback_reason: str | None = None,
+        search_query: str | None = None,
+        search_notice: str | None = None,
+    ) -> None:
+        event = {
+            "event": "result",
+            "trace_id": trace_id,
+            "updated_at": _now_iso(),
+            "parsed_action": parsed_action,
+        }
+        if final_reply is not None:
+            event["final_reply"] = final_reply
+        if fallback_reason is not None:
+            event["fallback_reason"] = fallback_reason
+        if search_query is not None:
+            event["search_query"] = search_query
+        if search_notice is not None:
+            event["search_notice"] = search_notice
+        self._append_event(event)
 
     def snapshot(self) -> dict[str, Any]:
         if not self.enabled:

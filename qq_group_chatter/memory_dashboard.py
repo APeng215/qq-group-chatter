@@ -657,6 +657,20 @@ def memory_dashboard_html(snapshot: dict[str, Any]) -> str:
       return `<pre class="trace-reasoning-content">${{formatTraceText(item.reasoning_content || "")}}</pre>`;
     }}
 
+    function renderTraceResult(item) {{
+      const result = {{
+        parsed_action: item.parsed_action || null,
+        final_reply: item.final_reply || null,
+        fallback_reason: item.fallback_reason || null,
+        search_notice: item.search_notice || null,
+        search_query: item.search_query || null,
+      }};
+      if (!Object.values(result).some(value => value !== null && String(value).trim())) {{
+        return '<div class="empty">没有解析后的最终输出</div>';
+      }}
+      return `<pre class="trace-json-block">${{escapeHtml(JSON.stringify(result, null, 2))}}</pre>`;
+    }}
+
     function renderSummary() {{
       const s = snapshot.summary || {{}};
       summaryEl.innerHTML = [
@@ -846,6 +860,7 @@ def memory_dashboard_html(snapshot: dict[str, Any]) -> str:
           <div class="grid">
             <div><span class="muted">model</span><div>${{escapeHtml(item.model || "")}}</div></div>
             <div><span class="muted">thinking</span><div>${{escapeHtml(item.thinking || "")}}</div></div>
+            <div><span class="muted">用户发言</span><div>${{escapeHtml(item.current_user_message || "")}}</div></div>
           </div>
           ${{item.error_message ? `<div class="error">${{escapeHtml(item.error_type || "Error")}}: ${{escapeHtml(item.error_message)}}</div>` : ""}}
           <details data-detail-key="${{escapeHtml(traceKey)}}:reasoning" ${{traceHasReasoningContent(item) ? "open" : ""}}>
@@ -855,6 +870,10 @@ def memory_dashboard_html(snapshot: dict[str, Any]) -> str:
           <details data-detail-key="${{escapeHtml(traceKey)}}:response" open>
             <summary>response</summary>
             <pre>${{formatTraceText(item.response_text || "")}}</pre>
+          </details>
+          <details data-detail-key="${{escapeHtml(traceKey)}}:result" ${{item.final_reply || item.parsed_action === "fallback" ? "open" : ""}}>
+            <summary>最终输出 / 解析结果</summary>
+            ${{renderTraceResult(item)}}
           </details>
           <details data-detail-key="${{escapeHtml(traceKey)}}:messages">
             <summary>messages</summary>

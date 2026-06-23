@@ -139,14 +139,20 @@ async def test_deepseek_llm_records_prompt_response_and_usage():
     result = await llm.ainvoke(
         "hello trace",
         response_format={"type": "json_object"},
-        trace_context={"component": "chat_agent", "operation": "decision"},
+        trace_context={
+            "component": "chat_agent",
+            "operation": "decision",
+            "current_user_message": "[QQ:123456 昵称:tester] hello",
+        },
     )
 
     assert result == "traced response"
     trace = store.snapshot()["traces"][0]
     assert trace["status"] == "success"
+    assert llm.last_trace_id == trace["trace_id"]
     assert trace["component"] == "chat_agent"
     assert trace["operation"] == "decision"
+    assert trace["current_user_message"] == "[QQ:123456 昵称:tester] hello"
     assert trace["model"] == "deepseek-v4-pro"
     assert trace["thinking"] == "enabled"
     assert trace["temperature"] == 0.7

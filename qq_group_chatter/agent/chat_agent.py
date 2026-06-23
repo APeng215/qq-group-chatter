@@ -147,11 +147,31 @@ class ChatAgent:
                 trace_context={
                     "component": "chat_agent",
                     "operation": "decision",
+                    "current_user_message": _format_current_user_message(
+                        context, user_message
+                    ),
                 },
             )
         decision = parse_chat_decision(self._content(raw))
         if decision is None:
-            return ChatReplyDecision(content="我刚刚没能整理好回复，稍后再试。")
+            fallback = ChatReplyDecision(content="我刚刚没能整理好回复，稍后再试。")
+            self._record_decision_trace_result(
+                parsed_action="fallback",
+                final_reply=fallback.content,
+                fallback_reason="invalid_chat_decision",
+            )
+            return fallback
+        if isinstance(decision, ChatReplyDecision):
+            self._record_decision_trace_result(
+                parsed_action="reply",
+                final_reply=decision.content,
+            )
+        else:
+            self._record_decision_trace_result(
+                parsed_action="web_search",
+                search_query=decision.query,
+                search_notice=decision.notice,
+            )
         return decision
 
     async def generate_grounded_search_reply(
@@ -191,6 +211,9 @@ class ChatAgent:
                 trace_context={
                     "component": "chat_agent",
                     "operation": "grounded_search_reply",
+                    "current_user_message": _format_current_user_message(
+                        context, user_message
+                    ),
                 },
             )
         return self._content(raw)
@@ -362,6 +385,35 @@ class ChatAgent:
         if hasattr(raw, "content"):
             return str(raw.content)
         return str(raw)
+
+    def _record_decision_trace_result(
+        self,
+        *,
+        parsed_action: str,
+        final_reply: str | None = None,
+        fallback_reason: str | None = None,
+        search_query: str | None = None,
+        search_notice: str | None = None,
+    ) -> None:
+        trace_store = getattr(self._llm, "trace_store", None)
+        trace_id = getattr(self._llm, "last_trace_id", None)
+        if trace_store is None or trace_id is None:
+            return
+        if not hasattr(trace_store, "record_result"):
+            return
+        kwargs = {
+            "trace_id": trace_id,
+            "parsed_action": parsed_action,
+        }
+        if final_reply is not None:
+            kwargs["final_reply"] = final_reply
+        if fallback_reason is not None:
+            kwargs["fallback_reason"] = fallback_reason
+        if search_query is not None:
+            kwargs["search_query"] = search_query
+        if search_notice is not None:
+            kwargs["search_notice"] = search_notice
+        trace_store.record_result(**kwargs)
 
 
 def _format_short_term_history(messages: list[ChatMessage]) -> str:

@@ -328,6 +328,7 @@ class TraceContextLLM:
     def __init__(self, response):
         self.response = response
         self.calls = []
+        self.last_trace_id = None
 
     async def ainvoke(self, prompt, *, response_format=None, system_prompt=None, trace_context=None):
         self.calls.append(
@@ -339,6 +340,17 @@ class TraceContextLLM:
             }
         )
         return self.response
+
+
+class ResultRecordingLLM(TraceContextLLM):
+    def __init__(self, response):
+        super().__init__(response)
+        self.last_trace_id = "trace-1"
+        self.results = []
+        self.trace_store = self
+
+    def record_result(self, **kwargs):
+        self.results.append(kwargs)
 
 
 async def test_chat_agent_passes_trace_context_for_decision_call():
@@ -363,6 +375,7 @@ async def test_chat_agent_passes_trace_context_for_decision_call():
     assert llm.calls[0]["trace_context"] == {
         "component": "chat_agent",
         "operation": "decision",
+        "current_user_message": "[QQ:123456 昵称:tester] hello",
     }
     assert llm.calls[0]["response_format"] == {"type": "json_object"}
     assert llm.calls[0]["system_prompt"] is not None
@@ -378,6 +391,35 @@ async def test_chat_agent_passes_trace_context_for_decision_call():
     assert "较早的会话长期记忆" not in llm.calls[0]["system_prompt"]
     assert "你必须只输出一个 JSON 对象" in llm.calls[0]["system_prompt"]
     assert "当前用户消息" not in llm.calls[0]["system_prompt"]
+
+
+async def test_chat_agent_records_final_fallback_reply_when_decision_parse_fails():
+    llm = ResultRecordingLLM("not json")
+    agent = ChatAgent(llm=llm)
+    context = build_group_conversation_context(
+        group_id=888888,
+        user_id=123456,
+        message_id="m1",
+        nickname="tester",
+        timestamp=123.0,
+    )
+
+    decision = await agent.generate_reply(
+        user_message="hello",
+        context=context,
+        short_term_messages=[],
+        long_term_memory=LongTermMemoryBundle(user_memories=[], conversation_memories=[]),
+    )
+
+    assert decision == ChatReplyDecision(content="我刚刚没能整理好回复，稍后再试。")
+    assert llm.results == [
+        {
+            "trace_id": "trace-1",
+            "parsed_action": "fallback",
+            "final_reply": "我刚刚没能整理好回复，稍后再试。",
+            "fallback_reason": "invalid_chat_decision",
+        }
+    ]
 
 
 async def test_chat_agent_passes_trace_context_for_grounded_search_call():
@@ -404,6 +446,7 @@ async def test_chat_agent_passes_trace_context_for_grounded_search_call():
     assert llm.calls[0]["trace_context"] == {
         "component": "chat_agent",
         "operation": "grounded_search_reply",
+        "current_user_message": "[QQ:123456 昵称:tester] hello",
     }
     assert llm.calls[0]["response_format"] is None
     assert llm.calls[0]["system_prompt"] is not None

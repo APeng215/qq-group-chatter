@@ -23,6 +23,7 @@ def test_trace_store_groups_events_and_summarizes_statuses():
         temperature=0.7,
         response_format={"type": "json_object"},
         messages=[{"role": "user", "content": "hello"}],
+        current_user_message="[QQ:123456 昵称:tester] hello",
     )
 
     store.record_success(
@@ -46,6 +47,7 @@ def test_trace_store_groups_events_and_summarizes_statuses():
     assert trace["operation"] == "decision"
     assert trace["model"] == "deepseek-v4-pro"
     assert trace["thinking"] == "disabled"
+    assert trace["current_user_message"] == "[QQ:123456 昵称:tester] hello"
     assert trace["response_format"] == {"type": "json_object"}
     assert trace["messages"] == [{"role": "user", "content": "hello"}]
     assert trace["response_text"] == '{"action":"reply","content":"hi"}'
@@ -205,3 +207,37 @@ def test_trace_store_sanitizes_error_messages():
     assert trace["error_type"] == "RuntimeError"
     assert "[REDACTED]" in trace["error_message"]
     assert "sk-secret" not in json.dumps(trace, ensure_ascii=False)
+
+
+def test_trace_store_records_final_reply_metadata():
+    tmp_path = trace_dir("final-reply")
+    store = LLMTraceStore(path=tmp_path / "traces.jsonl", max_records=10)
+    trace_id = store.record_start(
+        component="chat_agent",
+        operation="decision",
+        model="deepseek-v4-pro",
+        thinking="disabled",
+        temperature=0.7,
+        response_format={"type": "json_object"},
+        messages=[],
+    )
+    store.record_success(
+        trace_id=trace_id,
+        response_text="not json",
+        reasoning_content=None,
+        usage=None,
+        duration_ms=2.0,
+    )
+
+    store.record_result(
+        trace_id=trace_id,
+        parsed_action="fallback",
+        final_reply="我刚刚没能整理好回复，稍后再试。",
+        fallback_reason="invalid_chat_decision",
+    )
+
+    trace = store.snapshot()["traces"][0]
+    assert trace["response_text"] == "not json"
+    assert trace["parsed_action"] == "fallback"
+    assert trace["final_reply"] == "我刚刚没能整理好回复，稍后再试。"
+    assert trace["fallback_reason"] == "invalid_chat_decision"
