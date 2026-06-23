@@ -185,7 +185,8 @@ def test_memory_dashboard_html_renders_trace_text_newlines_readably():
 
     assert "formatTraceText" in html
     assert 'replace(/\\\\n/g, "\\n")' in html
-    assert '<pre>${formatTraceText(item.response_text || "")}</pre>' in html
+    assert "原始 response" in html
+    assert 'formatTraceText(item.response_text || "")' in html
 
 
 def test_memory_dashboard_html_renders_trace_messages_by_role_and_content():
@@ -205,17 +206,45 @@ def test_memory_dashboard_html_renders_trace_reasoning_content():
     assert "function traceHasReasoningContent(item)" in html
     assert "function renderTraceReasoning(item)" in html
     assert "trace-reasoning-content" in html
-    assert "thinking 内容" in html
+    assert "思考" in html
     assert "renderTraceSummary(traces)" in html
     assert "traces.filter(traceHasReasoningContent).length" in html
     assert "${renderTraceReasoning(item)}" in html
+    assert '<details data-detail-key="${escapeHtml(traceKey)}:reasoning">' in html
+    assert 'data-detail-key="${escapeHtml(traceKey)}:reasoning" ${traceHasReasoningContent(item) ? "open" : ""}' not in html
 
 
 def test_memory_dashboard_html_renders_trace_current_user_message():
     html = memory_dashboard_html({"summary": {"total": 0}, "memories": [], "errors": []})
 
-    assert "用户发言" in html
-    assert "item.current_user_message" in html
+    assert "function renderTraceUserQuestion(item)" in html
+    assert "用户提问" in html
+    assert "current_user_message" in html
+    assert "没有用户提问" in html
+    assert '<details data-detail-key="${escapeHtml(traceKey)}:user-question" open>' in html
+
+
+def test_memory_dashboard_html_renders_trace_assistant_reply_first():
+    html = memory_dashboard_html({"summary": {"total": 0}, "memories": [], "errors": []})
+
+    assert "function renderTraceAssistantReply(item)" in html
+    assert "神奈回复" in html
+    assert "item.final_reply || item.search_notice || item.response_text" in html
+    assert "原始 response" in html
+    assert '${renderTraceAssistantReply(item)}' in html
+    assert '<details data-detail-key="${escapeHtml(traceKey)}:assistant-reply" open>' in html
+
+
+def test_memory_dashboard_html_orders_primary_trace_sections_first():
+    html = memory_dashboard_html({"summary": {"total": 0}, "memories": [], "errors": []})
+
+    user_question = html.index("<summary>用户提问</summary>")
+    assistant_reply = html.index("<summary>神奈回复</summary>")
+    reasoning = html.index("<summary>思考</summary>")
+    context = html.index("<summary>上下文</summary>")
+    result = html.index("<summary>最终输出 / 解析结果</summary>")
+
+    assert user_question < assistant_reply < reasoning < context < result
 
 
 def test_memory_dashboard_html_labels_average_duration_as_chat_only():

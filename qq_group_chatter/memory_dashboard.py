@@ -646,6 +646,26 @@ def memory_dashboard_html(snapshot: dict[str, Any]) -> str:
       }}).join("");
     }}
 
+    function renderTraceUserQuestion(item) {{
+      const question = String(item?.current_user_message || "").trim();
+      if (!question) {{
+        return '<div class="empty">没有用户提问</div>';
+      }}
+      return `<pre class="trace-message-content">${{formatTraceText(question)}}</pre>`;
+    }}
+
+    function renderTraceAssistantReply(item) {{
+      const visibleReply = item.final_reply || item.search_notice || item.response_text;
+      const blocks = [];
+      if (String(visibleReply || "").trim()) {{
+        blocks.push(`<pre class="trace-message-content">${{formatTraceText(visibleReply)}}</pre>`);
+      }} else {{
+        blocks.push('<div class="empty">没有神奈回复</div>');
+      }}
+      blocks.push(`<div class="muted">原始 response</div><pre class="trace-json-block">${{formatTraceText(item.response_text || "")}}</pre>`);
+      return blocks.join("");
+    }}
+
     function traceHasReasoningContent(item) {{
       return Boolean(String(item?.reasoning_content || "").trim());
     }}
@@ -860,24 +880,27 @@ def memory_dashboard_html(snapshot: dict[str, Any]) -> str:
           <div class="grid">
             <div><span class="muted">model</span><div>${{escapeHtml(item.model || "")}}</div></div>
             <div><span class="muted">thinking</span><div>${{escapeHtml(item.thinking || "")}}</div></div>
-            <div><span class="muted">用户发言</span><div>${{escapeHtml(item.current_user_message || "")}}</div></div>
           </div>
           ${{item.error_message ? `<div class="error">${{escapeHtml(item.error_type || "Error")}}: ${{escapeHtml(item.error_message)}}</div>` : ""}}
-          <details data-detail-key="${{escapeHtml(traceKey)}}:reasoning" ${{traceHasReasoningContent(item) ? "open" : ""}}>
-            <summary>thinking 内容</summary>
+          <details data-detail-key="${{escapeHtml(traceKey)}}:user-question" open>
+            <summary>用户提问</summary>
+            ${{renderTraceUserQuestion(item)}}
+          </details>
+          <details data-detail-key="${{escapeHtml(traceKey)}}:assistant-reply" open>
+            <summary>神奈回复</summary>
+            ${{renderTraceAssistantReply(item)}}
+          </details>
+          <details data-detail-key="${{escapeHtml(traceKey)}}:reasoning">
+            <summary>思考</summary>
             ${{renderTraceReasoning(item)}}
           </details>
-          <details data-detail-key="${{escapeHtml(traceKey)}}:response" open>
-            <summary>response</summary>
-            <pre>${{formatTraceText(item.response_text || "")}}</pre>
+          <details data-detail-key="${{escapeHtml(traceKey)}}:messages">
+            <summary>上下文</summary>
+            ${{renderTraceMessages(item.messages || [])}}
           </details>
-          <details data-detail-key="${{escapeHtml(traceKey)}}:result" ${{item.final_reply || item.parsed_action === "fallback" ? "open" : ""}}>
+          <details data-detail-key="${{escapeHtml(traceKey)}}:result">
             <summary>最终输出 / 解析结果</summary>
             ${{renderTraceResult(item)}}
-          </details>
-          <details data-detail-key="${{escapeHtml(traceKey)}}:messages">
-            <summary>messages</summary>
-            ${{renderTraceMessages(item.messages || [])}}
           </details>
           <details data-detail-key="${{escapeHtml(traceKey)}}:options">
             <summary>usage / options</summary>
