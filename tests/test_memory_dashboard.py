@@ -275,10 +275,25 @@ def test_memory_dashboard_html_adds_trace_filter_status_and_quick_filters():
 
     assert 'id="trace-filter-status"' in html
     assert 'id="trace-component-chips"' in html
+    assert 'id="trace-diagnostic-chips"' in html
     assert "function renderTraceFilterStatus" in html
     assert "function renderTraceComponentChips" in html
+    assert "function renderTraceDiagnosticChips" in html
+    assert "function traceMatchesDiagnostic" in html
     assert "data-component-filter" in html
+    assert "data-diagnostic-filter" in html
     assert "traceFilterStatusEl" in html
+
+
+def test_memory_dashboard_html_groups_related_chat_traces_by_user_question():
+    html = memory_dashboard_html({"summary": {"total": 0}, "memories": [], "errors": []})
+
+    assert "function traceGroupKey(item)" in html
+    assert "function groupTracesByUserQuestion(traces)" in html
+    assert "trace-group" in html
+    assert "trace-group-head" in html
+    assert "trace-group-count" in html
+    assert "${group.traces.map(item => renderTraceCard(item)).join(\"\")}" in html
 
 
 def test_memory_dashboard_html_marks_trace_status_and_duration():
@@ -296,11 +311,20 @@ def test_memory_dashboard_html_adds_trace_copy_actions():
 
     assert "function copyTraceText" in html
     assert "function traceCopyPayload" in html
+    assert "function exportFilteredTraces" in html
     assert "navigator.clipboard.writeText" in html
     assert "data-copy-trace-id" in html
     assert "复制 ID" in html
     assert "复制响应" in html
+    assert "导出当前筛选" in html
     assert "traceListEl.addEventListener" in html
+
+
+def test_memory_dashboard_html_confirms_before_clearing_traces():
+    html = memory_dashboard_html({"summary": {"total": 0}, "memories": [], "errors": []})
+
+    assert "confirm(" in html
+    assert "确定清空当前所有 LLM trace" in html
 
 
 def test_memory_dashboard_html_renders_final_trace_result():

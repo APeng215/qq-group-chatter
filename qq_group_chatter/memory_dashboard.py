@@ -449,6 +449,28 @@ def memory_dashboard_html(snapshot: dict[str, Any]) -> str:
     .trace pre {{
       max-height: 360px;
     }}
+    .trace-group {{
+      margin-bottom: 18px;
+    }}
+    .trace-group-head {{
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      align-items: flex-start;
+      padding: 10px 12px;
+      margin-bottom: 10px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: #f8fafc;
+    }}
+    .trace-group-title {{
+      margin: 0;
+      font-weight: 700;
+      word-break: break-word;
+    }}
+    .trace-group-count {{
+      flex: 0 0 auto;
+    }}
     .trace-message {{
       margin-top: 12px;
     }}
@@ -544,12 +566,14 @@ def memory_dashboard_html(snapshot: dict[str, Any]) -> str:
           <option value="error">error</option>
         </select>
         <button id="trace-refresh" type="button">刷新</button>
+        <button id="trace-export" type="button">导出当前筛选</button>
         <button id="trace-clear" class="danger-button" type="button">清空</button>
       </section>
       <section id="trace-summary" class="summary"></section>
       <section id="trace-errors"></section>
       <section id="trace-filter-status" class="trace-filter-status"></section>
       <section id="trace-component-chips" class="trace-component-chips"></section>
+      <section id="trace-diagnostic-chips" class="trace-component-chips"></section>
       <section id="trace-list"></section>
     </section>
   </main>
@@ -578,7 +602,18 @@ def memory_dashboard_html(snapshot: dict[str, Any]) -> str:
     const traceComponentEl = document.querySelector("#trace-component");
     const traceStatusEl = document.querySelector("#trace-status");
     const traceRefreshEl = document.querySelector("#trace-refresh");
+    const traceExportEl = document.querySelector("#trace-export");
     const traceClearEl = document.querySelector("#trace-clear");
+    const traceDiagnosticChipsEl = document.querySelector("#trace-diagnostic-chips");
+    let activeTraceDiagnostic = "";
+
+    const TRACE_DIAGNOSTICS = [
+      {{ id: "fallback", label: "失败回复", match: item => Boolean(item?.fallback_reason || item?.parsed_action === "fallback") }},
+      {{ id: "web_search", label: "触发搜索", match: item => Boolean(item?.search_query || item?.parsed_action === "web_search" || item?.operation === "grounded_search_reply") }},
+      {{ id: "thinking", label: "有 thinking", match: item => traceHasReasoningContent(item) }},
+      {{ id: "slow", label: "慢调用 > 8s", match: item => typeof item?.duration_ms === "number" && item.duration_ms >= 8000 }},
+      {{ id: "memory_planner", label: "记忆规划", match: item => item?.component === "memory_planner" }},
+    ];
 
     function escapeHtml(value) {{
       return String(value ?? "").replace(/[&<>"']/g, char => ({{
@@ -810,6 +845,21 @@ def memory_dashboard_html(snapshot: dict[str, Any]) -> str:
       ].join("");
     }}
 
+    function renderTraceDiagnosticChips() {{
+      traceDiagnosticChipsEl.innerHTML = [
+        `<button class="chip ${{activeTraceDiagnostic ? "" : "active"}}" type="button" data-diagnostic-filter="">全部诊断</button>`,
+        ...TRACE_DIAGNOSTICS.map(diagnostic =>
+          `<button class="chip ${{diagnostic.id === activeTraceDiagnostic ? "active" : ""}}" type="button" data-diagnostic-filter="${{escapeHtml(diagnostic.id)}}">${{escapeHtml(diagnostic.label)}}</button>`
+        ),
+      ].join("");
+    }}
+
+    function traceMatchesDiagnostic(item) {{
+      if (!activeTraceDiagnostic) return true;
+      const diagnostic = TRACE_DIAGNOSTICS.find(candidate => candidate.id === activeTraceDiagnostic);
+      return diagnostic ? diagnostic.match(item) : true;
+    }}
+
     function filteredTraces() {{
       const q = traceSearchEl.value.trim().toLowerCase();
       const component = traceComponentEl.value;
@@ -817,6 +867,7 @@ def memory_dashboard_html(snapshot: dict[str, Any]) -> str:
       return (traceSnapshot.traces || []).filter(item => {{
         if (component && item.component !== component) return false;
         if (status && item.status !== status) return false;
+        if (!traceMatchesDiagnostic(item)) return false;
         if (!q) return true;
         return JSON.stringify(item).toLowerCase().includes(q);
       }});
@@ -827,6 +878,10 @@ def memory_dashboard_html(snapshot: dict[str, Any]) -> str:
       const filters = [];
       if (traceComponentEl.value) filters.push(`component=${{traceComponentEl.value}}`);
       if (traceStatusEl.value) filters.push(`status=${{traceStatusEl.value}}`);
+      if (activeTraceDiagnostic) {{
+        const diagnostic = TRACE_DIAGNOSTICS.find(candidate => candidate.id === activeTraceDiagnostic);
+        filters.push(`诊断=${{diagnostic ? diagnostic.label : activeTraceDiagnostic}}`);
+      }}
       if (traceSearchEl.value.trim()) filters.push("包含搜索词");
       const filterText = filters.length ? `筛选：${{filters.join("，")}}` : "未筛选";
       traceFilterStatusEl.textContent = `${{filterText}} · 显示 ${{traces.length}} / ${{total}} 条`;
@@ -847,6 +902,87 @@ def memory_dashboard_html(snapshot: dict[str, Any]) -> str:
       }});
     }}
 
+    function traceGroupKey(item) {{
+      const question = String(item?.current_user_message || "").trim();
+      if (question) return question;
+      return `trace:${{item?.trace_id || item?.created_at || Math.random()}}`;
+    }}
+
+    function groupTracesByUserQuestion(traces) {{
+      const groups = [];
+      traces.forEach(item => {{
+        const key = traceGroupKey(item);
+        const previous = groups[groups.length - 1];
+        if (previous && previous.key === key) {{
+          previous.traces.push(item);
+          return;
+        }}
+        groups.push({{
+          key,
+          title: String(item?.current_user_message || "").trim() || "没有用户提问",
+          traces: [item],
+        }});
+      }});
+      return groups;
+    }}
+
+    function renderTraceCard(item) {{
+      const traceKey = String(item.trace_id || item.created_at || "");
+      const usage = JSON.stringify(item.usage || {{}}, null, 2);
+      return `<article class="trace">
+        <div class="trace-headline">
+          <div class="badges">
+            <span class="badge ${{traceStatusClass(item.status)}}">${{escapeHtml(item.status || "running")}}</span>
+            <span class="badge">${{escapeHtml(item.component || "unknown")}}</span>
+            <span class="badge">${{escapeHtml(item.operation || "unknown")}}</span>
+            <span class="id">${{escapeHtml(item.trace_id)}}</span>
+          </div>
+          <div class="trace-actions">
+            <button class="trace-action" type="button" data-copy-trace-id="${{escapeHtml(traceKey)}}" data-copy-kind="id">复制 ID</button>
+            <button class="trace-action" type="button" data-copy-trace-id="${{escapeHtml(traceKey)}}" data-copy-kind="response">复制响应</button>
+            <button class="trace-action" type="button" data-copy-trace-id="${{escapeHtml(traceKey)}}" data-copy-kind="json">复制 JSON</button>
+          </div>
+        </div>
+        <div class="trace-meta">
+          <div class="muted">${{escapeHtml(item.created_at || "")}}</div>
+          <span class="duration-pill ${{durationSeverityClass(item.duration_ms)}}">${{escapeHtml(formatDurationMs(item.duration_ms))}}</span>
+        </div>
+        <div class="grid">
+          <div><span class="muted">model</span><div>${{escapeHtml(item.model || "")}}</div></div>
+          <div><span class="muted">thinking</span><div>${{escapeHtml(item.thinking || "")}}</div></div>
+        </div>
+        ${{item.error_message ? `<div class="error">${{escapeHtml(item.error_type || "Error")}}: ${{escapeHtml(item.error_message)}}</div>` : ""}}
+        <details data-detail-key="${{escapeHtml(traceKey)}}:user-question" open>
+          <summary>用户提问</summary>
+          ${{renderTraceUserQuestion(item)}}
+        </details>
+        <details data-detail-key="${{escapeHtml(traceKey)}}:assistant-reply" open>
+          <summary>神奈回复</summary>
+          ${{renderTraceAssistantReply(item)}}
+        </details>
+        <details data-detail-key="${{escapeHtml(traceKey)}}:reasoning">
+          <summary>思考</summary>
+          ${{renderTraceReasoning(item)}}
+        </details>
+        <details data-detail-key="${{escapeHtml(traceKey)}}:messages">
+          <summary>上下文</summary>
+          ${{renderTraceMessages(item.messages || [])}}
+        </details>
+        <details data-detail-key="${{escapeHtml(traceKey)}}:result">
+          <summary>最终输出 / 解析结果</summary>
+          ${{renderTraceResult(item)}}
+        </details>
+        <details data-detail-key="${{escapeHtml(traceKey)}}:options">
+          <summary>usage / options</summary>
+          <pre class="trace-json-block">${{escapeHtml(JSON.stringify({{
+            response_format: item.response_format || null,
+            temperature: item.temperature ?? null,
+            usage: item.usage || null,
+          }}, null, 2))}}</pre>
+        </details>
+      </article>`;
+    }}
+
     function renderTraceList() {{
       const detailState = captureTraceDetailState();
       const traces = filteredTraces();
@@ -856,62 +992,15 @@ def memory_dashboard_html(snapshot: dict[str, Any]) -> str:
         traceListEl.innerHTML = '<div class="empty">没有匹配的 LLM trace</div>';
         return;
       }}
-      traceListEl.innerHTML = traces.map(item => {{
-        const traceKey = String(item.trace_id || item.created_at || "");
-        const usage = JSON.stringify(item.usage || {{}}, null, 2);
-        return `<article class="trace">
-          <div class="trace-headline">
-            <div class="badges">
-              <span class="badge ${{traceStatusClass(item.status)}}">${{escapeHtml(item.status || "running")}}</span>
-              <span class="badge">${{escapeHtml(item.component || "unknown")}}</span>
-              <span class="badge">${{escapeHtml(item.operation || "unknown")}}</span>
-              <span class="id">${{escapeHtml(item.trace_id)}}</span>
-            </div>
-            <div class="trace-actions">
-              <button class="trace-action" type="button" data-copy-trace-id="${{escapeHtml(traceKey)}}" data-copy-kind="id">复制 ID</button>
-              <button class="trace-action" type="button" data-copy-trace-id="${{escapeHtml(traceKey)}}" data-copy-kind="response">复制响应</button>
-              <button class="trace-action" type="button" data-copy-trace-id="${{escapeHtml(traceKey)}}" data-copy-kind="json">复制 JSON</button>
-            </div>
+      traceListEl.innerHTML = groupTracesByUserQuestion(traces).map(group => `
+        <section class="trace-group">
+          <div class="trace-group-head">
+            <p class="trace-group-title">${{escapeHtml(group.title)}}</p>
+            <span class="badge trace-group-count">${{group.traces.length}} 条 trace</span>
           </div>
-          <div class="trace-meta">
-            <div class="muted">${{escapeHtml(item.created_at || "")}}</div>
-            <span class="duration-pill ${{durationSeverityClass(item.duration_ms)}}">${{escapeHtml(formatDurationMs(item.duration_ms))}}</span>
-          </div>
-          <div class="grid">
-            <div><span class="muted">model</span><div>${{escapeHtml(item.model || "")}}</div></div>
-            <div><span class="muted">thinking</span><div>${{escapeHtml(item.thinking || "")}}</div></div>
-          </div>
-          ${{item.error_message ? `<div class="error">${{escapeHtml(item.error_type || "Error")}}: ${{escapeHtml(item.error_message)}}</div>` : ""}}
-          <details data-detail-key="${{escapeHtml(traceKey)}}:user-question" open>
-            <summary>用户提问</summary>
-            ${{renderTraceUserQuestion(item)}}
-          </details>
-          <details data-detail-key="${{escapeHtml(traceKey)}}:assistant-reply" open>
-            <summary>神奈回复</summary>
-            ${{renderTraceAssistantReply(item)}}
-          </details>
-          <details data-detail-key="${{escapeHtml(traceKey)}}:reasoning">
-            <summary>思考</summary>
-            ${{renderTraceReasoning(item)}}
-          </details>
-          <details data-detail-key="${{escapeHtml(traceKey)}}:messages">
-            <summary>上下文</summary>
-            ${{renderTraceMessages(item.messages || [])}}
-          </details>
-          <details data-detail-key="${{escapeHtml(traceKey)}}:result">
-            <summary>最终输出 / 解析结果</summary>
-            ${{renderTraceResult(item)}}
-          </details>
-          <details data-detail-key="${{escapeHtml(traceKey)}}:options">
-            <summary>usage / options</summary>
-            <pre class="trace-json-block">${{escapeHtml(JSON.stringify({{
-              response_format: item.response_format || null,
-              temperature: item.temperature ?? null,
-              usage: item.usage || null,
-            }}, null, 2))}}</pre>
-          </details>
-        </article>`;
-      }}).join("");
+          ${{group.traces.map(item => renderTraceCard(item)).join("")}}
+        </section>
+      `).join("");
       restoreTraceDetailState(detailState);
     }}
 
@@ -945,6 +1034,7 @@ def memory_dashboard_html(snapshot: dict[str, Any]) -> str:
     }}
 
     async function clearTraces() {{
+      if (!confirm("确定清空当前所有 LLM trace？建议先导出当前筛选 JSON 留存排障证据。")) return;
       traceClearEl.disabled = true;
       try {{
         await fetch("/api/llm-traces/clear", {{ method: "POST", cache: "no-store" }});
@@ -954,12 +1044,43 @@ def memory_dashboard_html(snapshot: dict[str, Any]) -> str:
       }}
     }}
 
+    function exportFilteredTraces() {{
+      const traces = filteredTraces();
+      const payload = JSON.stringify({{
+        generated_at: new Date().toISOString(),
+        filters: {{
+          search: traceSearchEl.value.trim(),
+          component: traceComponentEl.value,
+          status: traceStatusEl.value,
+          diagnostic: activeTraceDiagnostic,
+        }},
+        traces,
+      }}, null, 2);
+      const blob = new Blob([payload], {{ type: "application/json;charset=utf-8" }});
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `llm-traces-${{new Date().toISOString().replace(/[:.]/g, "-")}}.json`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+    }}
+
     function onTraceComponentChipClick(event) {{
       const button = event.target.closest("[data-component-filter]");
       if (!button) return;
       traceComponentEl.value = button.dataset.componentFilter || "";
       renderTraceList();
       renderTraceComponentChips([...new Set((traceSnapshot.traces || []).map(item => item.component).filter(Boolean))].sort());
+    }}
+
+    function onTraceDiagnosticChipClick(event) {{
+      const button = event.target.closest("[data-diagnostic-filter]");
+      if (!button) return;
+      activeTraceDiagnostic = button.dataset.diagnosticFilter || "";
+      renderTraceList();
+      renderTraceDiagnosticChips();
     }}
 
     function onTraceListClick(event) {{
@@ -995,12 +1116,15 @@ def memory_dashboard_html(snapshot: dict[str, Any]) -> str:
     traceComponentEl.addEventListener("change", renderTraceList);
     traceStatusEl.addEventListener("change", renderTraceList);
     traceRefreshEl.addEventListener("click", refreshTraces);
+    traceExportEl.addEventListener("click", exportFilteredTraces);
     traceClearEl.addEventListener("click", clearTraces);
     traceComponentChipsEl.addEventListener("click", onTraceComponentChipClick);
+    traceDiagnosticChipsEl.addEventListener("click", onTraceDiagnosticChipClick);
     traceListEl.addEventListener("click", onTraceListClick);
     memoryTabEl.addEventListener("click", () => showPanel("memory"));
     llmTabEl.addEventListener("click", () => showPanel("llm"));
     syncKinds();
+    renderTraceDiagnosticChips();
     render();
   </script>
 </body>
