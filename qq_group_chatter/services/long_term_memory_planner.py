@@ -88,6 +88,9 @@ class LongTermMemoryPlanner:
                     trace_context={
                         "component": "memory_planner",
                         "operation": "plan_memory",
+                        "current_user_message": _format_current_user_message(
+                            context, user_message
+                        ),
                     },
                 )
             except TypeError:
@@ -234,6 +237,13 @@ def _format_assistant_reply(value: str | None) -> str:
         return "无"
     text = str(value).strip()
     return text or "无"
+
+
+def _format_current_user_message(context: ConversationContext, user_message: str) -> str:
+    return (
+        f"[QQ:{context.user_id} 昵称:{_display_nickname(context.nickname)}] "
+        f"{user_message}"
+    )
 
 
 def _message_speaker(message: ChatMessage) -> str:

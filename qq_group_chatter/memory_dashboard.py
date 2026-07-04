@@ -681,8 +681,21 @@ def memory_dashboard_html(snapshot: dict[str, Any]) -> str:
       }}).join("");
     }}
 
+    function extractPlannerUserMessage(messages) {{
+      if (!Array.isArray(messages)) return "";
+      const userMessage = messages.find(message => message && message.role === "user");
+      const content = String(userMessage?.content || "");
+      const match = content.match(/用户消息：\\s*\\n([^\\n]+)/);
+      return match ? match[1].trim() : "";
+    }}
+
+    function traceUserQuestion(item) {{
+      return String(item?.current_user_message || "").trim()
+        || extractPlannerUserMessage(item?.messages || []);
+    }}
+
     function renderTraceUserQuestion(item) {{
-      const question = String(item?.current_user_message || "").trim();
+      const question = traceUserQuestion(item);
       if (!question) {{
         return '<div class="empty">没有用户提问</div>';
       }}
@@ -903,7 +916,7 @@ def memory_dashboard_html(snapshot: dict[str, Any]) -> str:
     }}
 
     function traceGroupKey(item) {{
-      const question = String(item?.current_user_message || "").trim();
+      const question = traceUserQuestion(item);
       if (question) return question;
       return `trace:${{item?.trace_id || item?.created_at || Math.random()}}`;
     }}
@@ -919,11 +932,24 @@ def memory_dashboard_html(snapshot: dict[str, Any]) -> str:
         }}
         groups.push({{
           key,
-          title: String(item?.current_user_message || "").trim() || "没有用户提问",
+          title: traceUserQuestion(item) || "没有用户提问",
           traces: [item],
         }});
       }});
       return groups;
+    }}
+
+    function renderTraceGroup(group) {{
+      if (group.traces.length === 1) return renderTraceCard(group.traces[0]);
+      return `
+        <section class="trace-group">
+          <div class="trace-group-head">
+            <p class="trace-group-title">${{escapeHtml(group.title)}}</p>
+            <span class="badge trace-group-count">${{group.traces.length}} 条 trace</span>
+          </div>
+          ${{group.traces.map(item => renderTraceCard(item)).join("")}}
+        </section>
+      `;
     }}
 
     function renderTraceCard(item) {{
@@ -992,15 +1018,9 @@ def memory_dashboard_html(snapshot: dict[str, Any]) -> str:
         traceListEl.innerHTML = '<div class="empty">没有匹配的 LLM trace</div>';
         return;
       }}
-      traceListEl.innerHTML = groupTracesByUserQuestion(traces).map(group => `
-        <section class="trace-group">
-          <div class="trace-group-head">
-            <p class="trace-group-title">${{escapeHtml(group.title)}}</p>
-            <span class="badge trace-group-count">${{group.traces.length}} 条 trace</span>
-          </div>
-          ${{group.traces.map(item => renderTraceCard(item)).join("")}}
-        </section>
-      `).join("");
+      traceListEl.innerHTML = groupTracesByUserQuestion(traces)
+        .map(group => renderTraceGroup(group))
+        .join("");
       restoreTraceDetailState(detailState);
     }}
 

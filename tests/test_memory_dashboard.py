@@ -218,8 +218,11 @@ def test_memory_dashboard_html_renders_trace_current_user_message():
     html = memory_dashboard_html({"summary": {"total": 0}, "memories": [], "errors": []})
 
     assert "function renderTraceUserQuestion(item)" in html
+    assert "function traceUserQuestion(item)" in html
+    assert "function extractPlannerUserMessage(messages)" in html
     assert "用户提问" in html
     assert "current_user_message" in html
+    assert 'content.match(/用户消息：\\s*\\n([^\\n]+)/)' in html
     assert "没有用户提问" in html
     assert '<details data-detail-key="${escapeHtml(traceKey)}:user-question" open>' in html
 
@@ -290,10 +293,12 @@ def test_memory_dashboard_html_groups_related_chat_traces_by_user_question():
 
     assert "function traceGroupKey(item)" in html
     assert "function groupTracesByUserQuestion(traces)" in html
+    assert "function renderTraceGroup(group)" in html
     assert "trace-group" in html
     assert "trace-group-head" in html
     assert "trace-group-count" in html
-    assert "${group.traces.map(item => renderTraceCard(item)).join(\"\")}" in html
+    assert "if (group.traces.length === 1) return renderTraceCard(group.traces[0]);" in html
+    assert ".map(group => renderTraceGroup(group))" in html
 
 
 def test_memory_dashboard_html_marks_trace_status_and_duration():

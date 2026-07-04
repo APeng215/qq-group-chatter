@@ -61,6 +61,7 @@ async def test_planner_passes_json_response_format_and_trace_context_to_llm():
     assert llm.calls[0]["trace_context"] == {
         "component": "memory_planner",
         "operation": "plan_memory",
+        "current_user_message": "[QQ:123456 昵称:tester] hello",
     }
 
 
