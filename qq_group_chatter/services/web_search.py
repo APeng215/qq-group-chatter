@@ -154,7 +154,7 @@ def create_default_web_search_service() -> WebSearchService | None:
             include_answer=_read_bool("WEB_SEARCH_INCLUDE_ANSWER", False),
             timeout_seconds=_read_float("WEB_SEARCH_TIMEOUT_SECONDS", 8.0),
         ),
-        max_results=_read_int("WEB_SEARCH_MAX_RESULTS", 3),
+        max_results=_read_int("WEB_SEARCH_MAX_RESULTS", 5),
         max_raw_content_chars_per_result=_read_int(
             "WEB_SEARCH_MAX_RAW_CONTENT_CHARS_PER_RESULT",
             8000,

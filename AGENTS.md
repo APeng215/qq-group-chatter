@@ -88,10 +88,10 @@
 - 搜索入口在 `qq_group_chatter/services/web_search.py`；插件层不再拦截搜索触发词，所有消息都先进入普通聊天链路。
 - 即使用户说“搜一下/搜索/查一下”，也只是普通聊天内容；是否联网由 `ChatAgent` 的结构化 `web_search` 决策决定。不要重新新增 slash 命令或插件级硬搜索分支。
 - 默认搜索 provider 是 Tavily；`WEB_SEARCH_ENABLED=true` 时需要 `TAVILY_API_KEY`，否则搜索服务初始化会失败。
-- 默认 Tavily 参数：`WEB_SEARCH_DEPTH=basic`、`WEB_SEARCH_MAX_RESULTS=3`、`WEB_SEARCH_INCLUDE_RAW_CONTENT=markdown`、`WEB_SEARCH_INCLUDE_ANSWER=false`、`WEB_SEARCH_TIMEOUT_SECONDS=8`。
+- 默认 Tavily 参数：`WEB_SEARCH_DEPTH=basic`、`WEB_SEARCH_MAX_RESULTS=5`、`WEB_SEARCH_INCLUDE_RAW_CONTENT=markdown`、`WEB_SEARCH_INCLUDE_ANSWER=false`、`WEB_SEARCH_TIMEOUT_SECONDS=8`。
 - Tavily 只提供网页来源和 `raw_content`；自动搜索最终回复由 `ChatAgent` 基于 `chat_search_grounded.txt` 生成。
 - 自动搜索默认不向 prompt 暴露 URL；如需展示 URL，应先确认需求并更新 grounded prompt 与来源格式化逻辑。
-- 每条来源正文默认按 `WEB_SEARCH_MAX_RAW_CONTENT_CHARS_PER_RESULT=5000` 截断；prompt 里看到的是网页正文片段，不保证是完整页面。
+- 每条来源正文默认按 `WEB_SEARCH_MAX_RAW_CONTENT_CHARS_PER_RESULT=8000` 截断；prompt 里看到的是网页正文片段，不保证是完整页面。
 - 搜索上下文不写入长期记忆；搜索提示不写入短期记忆；最终搜索增强回复只在发送成功后作为 assistant 回复进入短期记忆。
 
 ## 可观测性

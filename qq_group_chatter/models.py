@@ -58,6 +58,7 @@ class ConversationArchiveRecord:
     message_id: str | None
     timestamp: float
     score: float | None = None
+    is_semantic_hit: bool = False
 
 
 @dataclass(frozen=True)

@@ -161,7 +161,7 @@ def test_default_web_search_service_is_enabled_by_default(monkeypatch):
 
     assert service is not None
     assert isinstance(service._client, TavilySearchClient)
-    assert service._max_results == 3
+    assert service._max_results == 5
     assert service._max_raw_content_chars_per_result == 8000
 
 

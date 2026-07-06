@@ -314,12 +314,13 @@ def test_chat_agent_prompt_includes_conversation_archive_when_available():
                 message_id="old-1",
                 timestamp=1781762340.0,
                 score=0.95,
+                is_semantic_hit=True,
             )
         ],
     )
 
-    assert "相关历史对话（语义召回，仅表示过去说过，不代表当前事实仍成立）：" in prompt
-    assert "[2026-06-18 13:59] [QQ:123456 昵称:阿咳] 我买的苹果太酸了" in prompt
+    assert "相关历史对话（语义召回；前文仅用于理解指代，不代表当前事实仍成立）：" in prompt
+    assert "[2026-06-18 13:59] [QQ:123456 昵称:阿咳] 我买的苹果太酸了 ← 命中" in prompt
     assert prompt.index("长期记忆：无") < prompt.index("相关历史对话")
     assert prompt.index("相关历史对话") < prompt.index("短期会话上下文")
 
@@ -371,6 +372,48 @@ def test_chat_agent_prompt_renders_conversation_archive_chronologically():
     )
 
     assert prompt.index("第一句") < prompt.index("第二句") < prompt.index("第三句")
+
+
+def test_chat_agent_prompt_marks_only_semantic_hit_archive_records():
+    agent = ChatAgent()
+    context = build_group_conversation_context(
+        group_id=888888,
+        user_id=123456,
+        message_id="m2",
+        nickname="阿咳",
+        timestamp=123.0,
+    )
+
+    prompt = agent._build_prompt(
+        user_message="那个后来怎么样了？",
+        context=context,
+        short_term_messages=[],
+        long_term_memory=LongTermMemoryBundle(user_memories=[], conversation_memories=[]),
+        conversation_archive=[
+            ConversationArchiveRecord(
+                content="前文",
+                role="user",
+                user_id="123456",
+                nickname="阿咳",
+                message_id="old-1",
+                timestamp=1781762340.0,
+                score=None,
+            ),
+            ConversationArchiveRecord(
+                content="命中句",
+                role="user",
+                user_id="123456",
+                nickname="阿咳",
+                message_id="old-2",
+                timestamp=1781762400.0,
+                score=0.95,
+                is_semantic_hit=True,
+            ),
+        ],
+    )
+
+    assert "[2026-06-18 13:59] [QQ:123456 昵称:阿咳] 前文\n" in prompt
+    assert "[2026-06-18 14:00] [QQ:123456 昵称:阿咳] 命中句 ← 命中" in prompt
 
 
 class TraceContextLLM:

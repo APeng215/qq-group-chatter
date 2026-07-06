@@ -180,6 +180,256 @@ async def test_archive_search_filters_current_conversation_and_returns_records()
     assert records[0].content == "苹果太酸了"
     assert records[0].user_id == "123456"
     assert records[0].score is not None
+    assert records[0].is_semantic_hit is True
+
+
+async def test_archive_search_includes_two_previous_messages_for_semantic_hit():
+    mem0 = FakeMem0Client(
+        search_results=[
+            {
+                "id": "hit",
+                "memory": "对，就是那个，之后都少辣点",
+                "score": 0.95,
+                "metadata": {
+                    "conversation_id": "qq_group:888888",
+                    "source_user_id": "123456",
+                    "source_nickname": "阿咳",
+                    "role": "user",
+                    "message_id": "m3",
+                    "timestamp": 300.0,
+                },
+            }
+        ],
+        get_all_results=[
+            {
+                "id": "m1",
+                "memory": "最近胃不太舒服",
+                "metadata": {
+                    "conversation_id": "qq_group:888888",
+                    "source_user_id": "123456",
+                    "source_nickname": "阿咳",
+                    "role": "user",
+                    "message_id": "m1",
+                    "timestamp": 100.0,
+                },
+            },
+            {
+                "id": "m2",
+                "memory": "那先别吃太辣的",
+                "metadata": {
+                    "conversation_id": "qq_group:888888",
+                    "source_user_id": None,
+                    "source_nickname": "神奈",
+                    "role": "assistant",
+                    "message_id": "prev-2",
+                    "timestamp": 200.0,
+                },
+            },
+            {
+                "id": "m3",
+                "memory": "对，就是那个，之后都少辣点",
+                "score": 0.95,
+                "metadata": {
+                    "conversation_id": "qq_group:888888",
+                    "source_user_id": "123456",
+                    "source_nickname": "阿咳",
+                    "role": "user",
+                    "message_id": "m3",
+                    "timestamp": 300.0,
+                },
+            },
+        ],
+    )
+    service = ConversationArchiveService(mem0_client=mem0)
+
+    records = await service.search("少辣", context())
+
+    assert mem0.get_all_calls == [
+        {
+            "filters": {
+                "user_id": "qq_archive:qq_group:888888",
+                "conversation_id": "qq_group:888888",
+                "archive_type": "conversation_message",
+            },
+            "top_k": 10000,
+        }
+    ]
+    assert [record.message_id for record in records] == ["m1", "prev-2", "m3"]
+    assert [record.is_semantic_hit for record in records] == [False, False, True]
+
+
+async def test_archive_search_dedupes_overlapping_context_windows_chronologically():
+    mem0 = FakeMem0Client(
+        search_results=[
+            {
+                "id": "m3",
+                "memory": "命中三",
+                "score": 0.95,
+                "metadata": {
+                    "conversation_id": "qq_group:888888",
+                    "source_user_id": "123456",
+                    "source_nickname": "阿咳",
+                    "role": "user",
+                    "message_id": "prev-3",
+                    "timestamp": 300.0,
+                },
+            },
+            {
+                "id": "m4",
+                "memory": "命中四",
+                "score": 0.94,
+                "metadata": {
+                    "conversation_id": "qq_group:888888",
+                    "source_user_id": "123456",
+                    "source_nickname": "阿咳",
+                    "role": "user",
+                    "message_id": "prev-4",
+                    "timestamp": 400.0,
+                },
+            },
+        ],
+        get_all_results=[
+            {
+                "id": f"m{index}",
+                "memory": f"消息{index}",
+                "metadata": {
+                    "conversation_id": "qq_group:888888",
+                    "source_user_id": "123456",
+                    "source_nickname": "阿咳",
+                    "role": "user",
+                    "message_id": f"prev-{index}",
+                    "timestamp": float(index * 100),
+                },
+            }
+            for index in range(1, 5)
+        ],
+    )
+    service = ConversationArchiveService(mem0_client=mem0)
+
+    records = await service.search("命中", context(), limit=2)
+
+    assert [record.message_id for record in records] == [
+        "prev-1",
+        "prev-2",
+        "prev-3",
+        "prev-4",
+    ]
+    assert [record.is_semantic_hit for record in records] == [False, False, True, True]
+
+
+async def test_archive_search_excludes_current_message_from_expanded_context():
+    mem0 = FakeMem0Client(
+        search_results=[
+            {
+                "id": "hit",
+                "memory": "旧消息",
+                "score": 0.91,
+                "metadata": {
+                    "conversation_id": "qq_group:888888",
+                    "source_user_id": "123456",
+                    "source_nickname": "阿咳",
+                    "role": "user",
+                    "message_id": "m1",
+                    "timestamp": 1000.0,
+                },
+            }
+        ],
+        get_all_results=[
+            {
+                "id": "current",
+                "memory": "当前消息",
+                "metadata": {
+                    "conversation_id": "qq_group:888888",
+                    "source_user_id": "123456",
+                    "source_nickname": "阿咳",
+                    "role": "user",
+                    "message_id": "m2",
+                    "timestamp": 2000.0,
+                },
+            },
+            {
+                "id": "old",
+                "memory": "旧消息",
+                "metadata": {
+                    "conversation_id": "qq_group:888888",
+                    "source_user_id": "123456",
+                    "source_nickname": "阿咳",
+                    "role": "user",
+                    "message_id": "m1",
+                    "timestamp": 1000.0,
+                },
+            },
+        ],
+    )
+    service = ConversationArchiveService(mem0_client=mem0)
+
+    records = await service.search("旧消息", context(), limit=1)
+
+    assert [record.message_id for record in records] == ["m1"]
+
+
+async def test_archive_search_expands_context_by_timestamp_when_message_id_is_missing():
+    mem0 = FakeMem0Client(
+        search_results=[
+            {
+                "id": "hit",
+                "memory": "没有 message id 的命中",
+                "score": 0.95,
+                "metadata": {
+                    "conversation_id": "qq_group:888888",
+                    "source_user_id": "123456",
+                    "source_nickname": "阿咳",
+                    "role": "user",
+                    "message_id": None,
+                    "timestamp": 300.0,
+                },
+            }
+        ],
+        get_all_results=[
+            {
+                "id": "m1",
+                "memory": "前文一",
+                "metadata": {
+                    "conversation_id": "qq_group:888888",
+                    "source_user_id": "123456",
+                    "source_nickname": "阿咳",
+                    "role": "user",
+                    "message_id": "m1",
+                    "timestamp": 100.0,
+                },
+            },
+            {
+                "id": "m2",
+                "memory": "前文二",
+                "metadata": {
+                    "conversation_id": "qq_group:888888",
+                    "source_user_id": "123456",
+                    "source_nickname": "阿咳",
+                    "role": "user",
+                    "message_id": "prev-2",
+                    "timestamp": 200.0,
+                },
+            },
+            {
+                "id": "hit",
+                "memory": "没有 message id 的命中",
+                "metadata": {
+                    "conversation_id": "qq_group:888888",
+                    "source_user_id": "123456",
+                    "source_nickname": "阿咳",
+                    "role": "user",
+                    "message_id": None,
+                    "timestamp": 300.0,
+                },
+            },
+        ],
+    )
+    service = ConversationArchiveService(mem0_client=mem0)
+
+    records = await service.search("命中", context(), limit=1)
+
+    assert [record.content for record in records] == ["前文一", "前文二", "没有 message id 的命中"]
+    assert [record.is_semantic_hit for record in records] == [False, False, True]
 
 
 async def test_archive_search_treats_legacy_senderless_reply_as_assistant():

@@ -432,15 +432,20 @@ def _format_conversation_archive(records: list[ConversationArchiveRecord]) -> st
     if not records:
         return ""
     lines = [
-        "相关历史对话（语义召回，仅表示过去说过，不代表当前事实仍成立）："
+        "相关历史对话（语义召回；前文仅用于理解指代，不代表当前事实仍成立）："
     ]
     for record in _sort_conversation_archive_for_prompt(records):
         speaker = _format_archive_speaker(record)
         timestamp = format_time_text(record.timestamp)
+        content = (
+            f"{record.content} ← 命中"
+            if record.is_semantic_hit
+            else record.content
+        )
         if timestamp is None:
-            lines.append(f"- {speaker} {record.content}")
+            lines.append(f"- {speaker} {content}")
         else:
-            lines.append(f"- [{timestamp}] {speaker} {record.content}")
+            lines.append(f"- [{timestamp}] {speaker} {content}")
     return "\n".join(lines)
 
 

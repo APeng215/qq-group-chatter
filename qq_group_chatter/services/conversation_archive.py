@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import math
+from dataclasses import replace
 from time import time
 from typing import Any
 
@@ -15,6 +16,10 @@ from qq_group_chatter.observability import record_error
 
 class ConversationArchiveError(RuntimeError):
     pass
+
+
+ARCHIVE_CONTEXT_BEFORE_MESSAGES = 2
+ARCHIVE_PROMPT_MAX_MESSAGES = 15
 
 
 class ConversationArchiveService:
@@ -103,7 +108,62 @@ class ConversationArchiveService:
             ),
             reverse=True,
         )
-        return ranked[:resolved_limit]
+        semantic_hits = [
+            replace(record, is_semantic_hit=True) for record in ranked[:resolved_limit]
+        ]
+        return await self._expand_with_previous_messages(semantic_hits, context)
+
+    async def _expand_with_previous_messages(
+        self,
+        semantic_hits: list[ConversationArchiveRecord],
+        context: ConversationContext,
+    ) -> list[ConversationArchiveRecord]:
+        if not semantic_hits:
+            return []
+        try:
+            raw = await asyncio.to_thread(
+                self._mem0.get_all,
+                filters={
+                    "user_id": _archive_user_id(context.conversation_id),
+                    "conversation_id": context.conversation_id,
+                    "archive_type": "conversation_message",
+                },
+                top_k=max(10000, self._max_messages_per_conversation * 2),
+            )
+        except Exception as exc:
+            record_error("conversation_archive_context_get_all", exc)
+            return sorted(semantic_hits, key=_archive_prompt_sort_key)
+
+        history = _exclude_current_message(_normalize_archive_records(raw), context)
+        if not history:
+            return sorted(semantic_hits, key=_archive_prompt_sort_key)
+
+        history = sorted(history, key=_archive_prompt_sort_key)
+        expanded: dict[tuple[str, float, str], ConversationArchiveRecord] = {}
+        for hit in semantic_hits:
+            hit_index = _find_history_record_index(history, hit)
+            if hit_index is None:
+                for key, record in _records_for_prompt([hit]):
+                    expanded[key] = record
+                continue
+            window_start = max(0, hit_index - ARCHIVE_CONTEXT_BEFORE_MESSAGES)
+            window = history[window_start : hit_index + 1]
+            for key, record in _records_for_prompt(window):
+                existing = expanded.get(key)
+                if existing is None or record.is_semantic_hit:
+                    expanded[key] = replace(
+                        record,
+                        is_semantic_hit=record.is_semantic_hit
+                        or _is_same_archive_record(record, hit),
+                    )
+            hit_key = _archive_record_key(hit)
+            if hit_key not in expanded:
+                expanded[hit_key] = hit
+            elif hit.is_semantic_hit:
+                expanded[hit_key] = replace(expanded[hit_key], is_semantic_hit=True)
+        return sorted(expanded.values(), key=_archive_prompt_sort_key)[
+            :ARCHIVE_PROMPT_MAX_MESSAGES
+        ]
 
     async def _run_worker(self) -> None:
         while True:
@@ -219,6 +279,43 @@ def _normalize_archive_records(raw: Any) -> list[ConversationArchiveRecord]:
             )
         )
     return records
+
+
+def _records_for_prompt(
+    records: list[ConversationArchiveRecord],
+) -> list[tuple[tuple[str, float, str], ConversationArchiveRecord]]:
+    return [(_archive_record_key(record), record) for record in records]
+
+
+def _archive_record_key(record: ConversationArchiveRecord) -> tuple[str, float, str]:
+    if record.message_id:
+        return ("id", 0.0, record.message_id)
+    return ("time", record.timestamp, record.content)
+
+
+def _find_history_record_index(
+    history: list[ConversationArchiveRecord],
+    hit: ConversationArchiveRecord,
+) -> int | None:
+    for index, record in enumerate(history):
+        if _is_same_archive_record(record, hit):
+            return index
+    return None
+
+
+def _is_same_archive_record(
+    left: ConversationArchiveRecord,
+    right: ConversationArchiveRecord,
+) -> bool:
+    if left.message_id and right.message_id:
+        return left.message_id == right.message_id
+    return left.timestamp == right.timestamp and left.content == right.content
+
+
+def _archive_prompt_sort_key(record: ConversationArchiveRecord) -> tuple[int, float, str]:
+    if record.timestamp > 0:
+        return (1, record.timestamp, record.message_id or record.content)
+    return (0, 0.0, record.message_id or record.content)
 
 
 def _normalize_archive_memory_records(raw: Any) -> list[dict[str, Any]]:
