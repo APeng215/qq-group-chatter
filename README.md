@@ -8,6 +8,7 @@ NoneBot2 + OneBot v11 的 QQ 群聊/私聊机器人，使用 DeepSeek 生成回�
 - 群聊中只响应 `@机器人` 的消息，私聊直接响应。
 - 使用短期记忆保留最近对话上下文。
 - 使用 Mem0 保存长期记忆，包括用户偏好、约束、身份信息和会话规则。
+- 使用独立的原始对话语义归档召回更早的历史对话片段。
 - 聊天 Agent 可在需要实时资料时自动触发联网搜索。
 - 提供运行控制台：`/console`，包含记忆库和本地 LLM 调用控制台。
 - 运行日志默认写入 `logs/`，日志目录不会提交到 Git。
@@ -126,7 +127,7 @@ python bot.py
 2. 注册 OneBot v11 adapter。
 3. 加载聊天插件 `qq_group_chatter.plugins.chat`。
 4. 创建默认应用 `create_default_application()`。
-5. 随 NoneBot 启停长期记忆后台 worker。
+5. 随 NoneBot 启停长期记忆后台 worker 和原始对话语义归档 worker。
 6. 注册运行控制台。
 
 OneBot v11 连接端需要连接到 NoneBot 的监听地址。具体连接方式取决于你使用的 QQ 连接端，请按对应项目的 OneBot v11 反向 WebSocket / HTTP 配置填写。
@@ -143,7 +144,7 @@ OneBot v11 连接端需要连接到 NoneBot 的监听地址。具体连接方式
 @机器人 今天帮我总结一下这个方案
 ```
 
-普通聊天链路会读取短期记忆和长期记忆，再生成回复。有效用户消息会投递给长期记忆后台 worker，长期记忆写入不会阻塞本轮回复。
+普通聊天链路会读取短期记忆、长期记忆和相关历史对话片段，再生成回复。有效用户消息和发送成功后的 assistant 回复会进入原始对话语义归档；长期记忆写入走后台 worker，不会阻塞下一轮消息处理。
 
 ### 联网搜索
 
@@ -205,6 +206,16 @@ http://127.0.0.1:8080/api/llm-traces
 - 重启后会从本地文件恢复最近的短期历史。
 - 可通过 `SHORT_TERM_MEMORY_MAX_MESSAGES` 和 `SHORT_TERM_MEMORY_PATH` 调整保留上限和路径。
 
+原始对话语义归档：
+
+- 用于召回更早的原始 user / assistant 对话片段，不是长期记忆事实库。
+- 默认启用：`CONVERSATION_ARCHIVE_ENABLED=true`。
+- 使用独立 Mem0 命名空间，默认本地向量库在 `.mem0/qdrant-archive`，历史库在 `.mem0/archive-history.db`。
+- 归档 ID 使用 `qq_archive:{conversation_id}`，并用 `conversation_id` 和 `archive_type="conversation_message"` 过滤当前会话。
+- 默认每个会话最多保留 5000 条，可通过 `CONVERSATION_ARCHIVE_MAX_MESSAGES_PER_CONVERSATION` 调整。
+- 默认召回 5 条结果，可通过 `CONVERSATION_ARCHIVE_TOP_K`、`CONVERSATION_ARCHIVE_CANDIDATE_K` 和权重配置调整。
+- 它只作为聊天上下文和长期记忆 planner 的指代参考；planner 不能仅凭旧归档创建、更新或删除长期记忆。
+
 长期记忆：
 
 - 使用 Mem0 真实存储。
@@ -214,7 +225,7 @@ http://127.0.0.1:8080/api/llm-traces
 - 只处理用户消息，不处理 assistant 回复。
 - 写入 Mem0 时使用 `infer=False`，由项目自己的 planner 决定 add/update/skip。
 - 召回时先从 Mem0 获取候选，再按语义分和长期记忆最近使用/更新时间做时间衰减重排。
-- 回复发送成功后的长期记忆 planner 仍只调用一次；同一次结果里可用 `usage_updates` 标记本轮明显用到的记忆，后台异步刷新 `last_recalled_at` 和 `recall_count`。
+- 回复发送成功后的长期记忆 planner 仍只调用一次；会携带本轮用户消息、短期上下文、长期记忆快照、原始对话语义归档快照和 assistant 回复。同一次结果里可用 `usage_updates` 标记本轮明显用到的记忆，后台异步刷新 `last_recalled_at` 和 `recall_count`。
 - Mem0 查询必须带 `user_id`、`agent_id`、`run_id` 之一；同会话全局相关记忆查询使用 `{"user_id": "*", "conversation_id": context.conversation_id}`，再由项目代码过滤和去重。
 - 不提取手机号、密码、token、API key、地址等敏感内容。
 
@@ -309,5 +320,6 @@ python -m pip install -e .
 - 短期记忆：`qq_group_chatter/services/short_term_memory.py`
 - 长期记忆：`qq_group_chatter/services/long_term_memory.py`
 - 长期记忆 planner：`qq_group_chatter/services/long_term_memory_planner.py`
+- 原始对话语义归档：`qq_group_chatter/services/conversation_archive.py`
 - 联网搜索：`qq_group_chatter/services/web_search.py`
 - Prompt 文件：`qq_group_chatter/prompts/`

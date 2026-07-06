@@ -10,11 +10,12 @@
 ## 入口和链路
 
 - 启动入口：`bot.py`。
-- 生产装配必须用 `create_default_application()`，让长期记忆 worker 随 `application.start()` / `application.stop()` 管理生命周期。
-- `create_default_orchestrator()` 只用于测试或显式自定义装配；直接用它不会自动启动长期记忆 worker。
+- 生产装配必须用 `create_default_application()`，让长期记忆 worker 和会话归档 worker 随 `application.start()` / `application.stop()` 管理生命周期。
+- `create_default_orchestrator()` 只用于测试或显式自定义装配；直接用它不会自动启动长期记忆 worker，也不会装配会话归档。
 - NoneBot 插件入口：`qq_group_chatter/plugins/chat.py`。
 - 主编排：`qq_group_chatter/orchestrator.py`。
 - 联网搜索服务：`qq_group_chatter/services/web_search.py`，由 `create_default_application()` 装配后注入 `ChatOrchestrator`。
+- 原始对话语义归档：`qq_group_chatter/services/conversation_archive.py`，由 `create_default_application()` 装配后注入 `ChatOrchestrator`。
 - 群聊和私聊都先构造成 `ConversationContext`。
 
 主链路顺序保持：
@@ -24,14 +25,15 @@
 3. 写入 `ShortTermMemoryService`
 4. 读取短期记忆
 5. 查询用户长期记忆和会话长期记忆
-6. 携带本轮长期记忆查询快照，投递用户消息到长期记忆后台 ingestion
+6. 查询原始对话语义归档，作为更早历史对话参考
 7. 调用 `ChatAgent` 生成回复
 8. 发送回复
-9. 把 assistant 回复写入短期记忆
+9. 把 assistant 回复写入短期记忆和原始对话语义归档
+10. 携带本轮长期记忆查询快照和原始对话语义归档快照，投递用户消息到长期记忆后台 ingestion
 
 联网搜索是普通聊天链路里的补充资料步骤：`ChatAgent` 先用 DeepSeek JSON Output 返回 `reply` 或 `web_search` 决策；如果是 `web_search`，`ChatOrchestrator` 先发送模型生成的 `notice`，再调用 `WebSearchService.search_sources()` 获取 Tavily 来源，最后回到 `ChatAgent.generate_grounded_search_reply()` 用神奈口吻回答。
 
-长期记忆 planner 的事实来源仍然只看用户消息；assistant 回复只允许作为确认/拒绝/限定上下文，不能作为独立记忆事实来源。
+长期记忆 planner 的事实来源仍然只看本轮用户消息；短期上下文、原始对话语义归档和 assistant 回复只允许作为指代、确认、拒绝、限定上下文，不能作为独立记忆事实来源。
 
 ## 记忆边界
 
@@ -53,6 +55,18 @@
 - 查询当前用户和当前会话长期记忆时用 `filters={"user_id": ...}`；查询同会话全局相关记忆时用 `filters={"user_id": "*", "conversation_id": context.conversation_id}`，再由项目代码过滤 owner 和去重。
 - 不要提取手机号、密码、token、api key、地址等敏感内容。
 
+## 原始对话语义归档
+
+- 原始对话语义归档不是长期记忆事实库；它保存较早的 user / assistant 原始消息片段，用于普通聊天和搜索增强回复里的历史对话召回。
+- 服务在 `qq_group_chatter/services/conversation_archive.py`；默认由 `create_default_application()` 创建，随应用生命周期启动/停止后台 worker。
+- 默认启用：`CONVERSATION_ARCHIVE_ENABLED=true`。关闭后普通聊天仍可运行，但不会召回更早原始对话。
+- 默认使用独立 Mem0 命名空间和本地存储：collection 前缀 `qq_group_chatter_archive`，向量库 `.mem0/qdrant-archive`，历史库 `.mem0/archive-history.db`。不要和长期记忆的 `.mem0/qdrant` 混为同一个逻辑库。
+- 归档写入 `infer=False`，只存原始消息和元数据，不依赖 Mem0 内部 LLM 自动推理。
+- 归档 user_id 使用 `qq_archive:{conversation_id}`；Mem0 查询仍必须带 `user_id`，并同时带 `conversation_id` 和 `archive_type="conversation_message"` 过滤。
+- 默认每会话最多保留 `CONVERSATION_ARCHIVE_MAX_MESSAGES_PER_CONVERSATION=5000` 条；超过后按最旧消息裁剪。不要在机器人运行时直接删除 `.mem0/`。
+- 归档召回默认 `CONVERSATION_ARCHIVE_TOP_K=5`、`CONVERSATION_ARCHIVE_CANDIDATE_K=20`，再按语义分和时间衰减重排。
+- 归档可以包含 assistant 原始回复；这只用于聊天上下文和 planner 指代理解，不能让 planner 仅凭历史归档创建、更新或删除长期记忆。
+
 ## DeepSeek 和 Mem0
 
 - `DEEPSEEK_API_KEY` 必填：聊天 Agent 和 Mem0 内部 LLM 都需要。
@@ -65,7 +79,7 @@
   - Mem0 embedding：本地 `fastembed`
   - 本地向量库：`.mem0/qdrant`
 - `.env` 本地使用且已 ignore；提交示例只改 `.env.example`。
-- `.mem0/` 是运行数据、本地长期记忆存储和短期记忆持久化存储，可以保留用于加快下次运行或保留本地记忆；不要提交。
+- `.mem0/` 是运行数据、本地长期记忆存储、原始对话语义归档和短期记忆持久化存储，可以保留用于加快下次运行或保留本地记忆；不要提交。
 
 ## 联网搜索
 
@@ -107,7 +121,8 @@ python -c "from qq_group_chatter.app import create_default_mem0_client; c=create
 
 ## 开发注意
 
-- 不要把长期记忆 ingestion 延后到生成回复之后；收到有效用户消息后，应在读取短期记忆和查询长期记忆后，携带本轮长期记忆快照投递。
+- 不要跳过 `create_default_application()` 的生产装配；否则长期记忆 worker、会话归档 worker、联网搜索和 LLM trace 可能不会按生产链路注入或随生命周期管理。
+- 不要把长期记忆 ingestion 放到缺少上下文快照的位置；发送回复成功后，应携带本轮用户消息、短期上下文、长期记忆快照、原始对话语义归档快照和 assistant 回复投递。
 - 不要把 assistant 回复用于长期记忆 planner。
 - 不要提交 `.env`、`.mem0/`、`logs/llm-traces.jsonl`、`*.egg-info/`、缓存目录或 API key。
 - 修改默认模型、记忆 scope、持久化策略前，先确认用户是否真的改变了需求。
