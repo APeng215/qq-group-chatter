@@ -75,6 +75,8 @@ class LongTermMemoryOperation:
     content: str
     kind: MemoryKind
     confidence: float
+    target_user_id: str | None = None
+    target_nickname: str | None = None
 
 
 @dataclass(frozen=True)

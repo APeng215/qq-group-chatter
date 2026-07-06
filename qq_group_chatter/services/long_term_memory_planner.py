@@ -34,6 +34,18 @@ VALID_KINDS = {
 }
 
 
+def _user_key(user_id: str | None) -> str | None:
+    text = str(user_id or "").strip()
+    return text or None
+
+
+def _nickname_key(nickname: str | None) -> str | None:
+    text = str(nickname or "").strip()
+    if not text or text == "未设置":
+        return None
+    return text
+
+
 class LongTermMemoryPlanner:
     def __init__(
         self,
@@ -100,6 +112,14 @@ class LongTermMemoryPlanner:
             user_memories=user_memories,
             conversation_memories=conversation_memories,
             global_memories=resolved_global_memories,
+            known_user_ids={
+                user["user_id"]
+                for user in _collect_known_users(
+                    context,
+                    short_term_messages or [],
+                    conversation_archive or [],
+                )
+            },
         )
 
     def _build_prompt(
@@ -115,10 +135,12 @@ class LongTermMemoryPlanner:
         assistant_reply: str | None,
     ) -> str:
         history_messages = _history_without_current_message(short_term_messages, context)
+        known_users = _collect_known_users(context, history_messages, conversation_archive)
         return PLANNER_PROMPT_TEMPLATE.format(
             conversation_type=context.conversation_type,
             current_user_qq=context.user_id,
             current_user_nickname=_display_nickname(context.nickname),
+            known_users_json=_known_users_json(known_users),
             user_message=user_message,
             short_term_history=_format_short_term_history(history_messages),
             conversation_archive_section=_format_conversation_archive_reference(
@@ -137,6 +159,7 @@ class LongTermMemoryPlanner:
         user_memories: list[LongTermMemoryRecord],
         conversation_memories: list[LongTermMemoryRecord],
         global_memories: list[LongTermMemoryRecord],
+        known_user_ids: set[str],
     ) -> LongTermMemoryPlanResult:
         data = _loads_json_object(raw)
         if not isinstance(data, dict):
@@ -160,6 +183,9 @@ class LongTermMemoryPlanner:
                 if record.id is not None
             },
         }
+        user_targets_by_id = _user_targets_by_id(
+            [*user_memories, *_records_for_scope(global_memories, "user")]
+        )
         operations: list[LongTermMemoryOperation] = []
         writable_count = 0
         for item in items:
@@ -167,6 +193,8 @@ class LongTermMemoryPlanner:
                 item,
                 min_confidence=self._min_confidence,
                 valid_ids_by_scope=valid_ids_by_scope,
+                known_user_ids=known_user_ids,
+                user_targets_by_id=user_targets_by_id,
             )
             if operation is None:
                 continue
@@ -195,11 +223,111 @@ def _records_json(records: list[LongTermMemoryRecord]) -> str:
                 "scope": record.metadata.get("scope"),
                 "content": record.content,
                 "kind": record.metadata.get("kind"),
+                "owner_user_id": _record_owner_user_id(record),
+                "owner_nickname": record.metadata.get("target_nickname")
+                or record.metadata.get("source_nickname"),
+                "memory_user_id": record.metadata.get("user_id"),
             }
             for record in records
         ],
         ensure_ascii=False,
     )
+
+
+def _known_users_json(users: list[dict[str, object]]) -> str:
+    return json.dumps(users, ensure_ascii=False)
+
+
+def _collect_known_users(
+    context: ConversationContext,
+    short_term_messages: list[ChatMessage],
+    conversation_archive: list[ConversationArchiveRecord],
+) -> list[dict[str, object]]:
+    users: dict[str, dict[str, object]] = {}
+
+    def add_user(
+        user_id: str | None,
+        nickname: str | None,
+        *,
+        is_current_user: bool = False,
+        source: str,
+    ) -> None:
+        resolved_user_id = _user_key(user_id)
+        if resolved_user_id is None or resolved_user_id == "未知":
+            return
+        existing = users.setdefault(
+            resolved_user_id,
+            {
+                "user_id": resolved_user_id,
+                "nickname": _display_nickname(nickname),
+                "is_current_user": False,
+                "sources": [],
+            },
+        )
+        if _nickname_key(nickname) is not None:
+            existing["nickname"] = _display_nickname(nickname)
+        existing["is_current_user"] = bool(existing["is_current_user"]) or is_current_user
+        sources = existing["sources"]
+        if isinstance(sources, list) and source not in sources:
+            sources.append(source)
+
+    add_user(
+        context.user_id,
+        context.nickname,
+        is_current_user=True,
+        source="current_user",
+    )
+    for message in short_term_messages:
+        if message.role == "user":
+            add_user(message.user_id, message.nickname, source="short_term")
+    for record in conversation_archive:
+        if record.role == "user":
+            add_user(record.user_id, record.nickname, source="conversation_archive")
+
+    nickname_counts: dict[str, int] = {}
+    for user in users.values():
+        nickname = _nickname_key(str(user.get("nickname", "")))
+        if nickname is not None:
+            nickname_counts[nickname] = nickname_counts.get(nickname, 0) + 1
+
+    result = []
+    for user in users.values():
+        nickname = _nickname_key(str(user.get("nickname", "")))
+        result.append(
+            {
+                **user,
+                "nickname_is_unique": bool(nickname and nickname_counts.get(nickname) == 1),
+            }
+        )
+    return sorted(result, key=lambda item: (not bool(item["is_current_user"]), str(item["user_id"])))
+
+
+def _record_owner_user_id(record: LongTermMemoryRecord) -> str | None:
+    target_user_id = _user_key(record.metadata.get("target_user_id"))  # type: ignore[arg-type]
+    if target_user_id is not None:
+        return target_user_id
+    owner = _user_key(record.metadata.get("user_id"))  # type: ignore[arg-type]
+    if owner is None:
+        return None
+    match = re.match(r"^qq_user:[^:]+:[^:]+:(.+)$", owner)
+    if match:
+        return match.group(1)
+    return None
+
+
+def _user_targets_by_id(
+    records: list[LongTermMemoryRecord],
+) -> dict[str, tuple[str | None, str | None]]:
+    result = {}
+    for record in records:
+        if record.id is None:
+            continue
+        result[record.id] = (
+            _record_owner_user_id(record),
+            _nickname_key(record.metadata.get("target_nickname"))  # type: ignore[arg-type]
+            or _nickname_key(record.metadata.get("source_nickname")),  # type: ignore[arg-type]
+        )
+    return result
 
 
 def _history_without_current_message(
@@ -285,6 +413,8 @@ def _parse_operation(
     *,
     min_confidence: float,
     valid_ids_by_scope: dict[str, set[str]],
+    known_user_ids: set[str],
+    user_targets_by_id: dict[str, tuple[str | None, str | None]],
 ) -> LongTermMemoryOperation | None:
     if not isinstance(item, dict):
         return None
@@ -294,6 +424,8 @@ def _parse_operation(
     kind = str(item.get("kind", "")).strip().lower()
     content = str(item.get("content") or "").strip()
     target_id = item.get("target_id")
+    target_user_id = _user_key(item.get("target_user_id"))
+    target_nickname = _nickname_key(item.get("target_nickname"))
     try:
         confidence = float(item.get("confidence", 0))
     except (TypeError, ValueError):
@@ -313,8 +445,33 @@ def _parse_operation(
         target_id = str(target_id).strip() if target_id is not None else None
         if not target_id or target_id not in valid_ids_by_scope[scope]:
             return None
+        target_user_is_existing_owner = False
+        if scope == "user":
+            existing_target_user_id, existing_target_nickname = user_targets_by_id.get(
+                target_id,
+                (None, None),
+            )
+            if target_user_id is None:
+                target_user_id = existing_target_user_id
+                target_nickname = target_nickname or existing_target_nickname
+                target_user_is_existing_owner = existing_target_user_id is not None
+            elif existing_target_user_id is not None:
+                if target_user_id != existing_target_user_id:
+                    return None
+                target_nickname = target_nickname or existing_target_nickname
+                target_user_is_existing_owner = True
     else:
         target_id = str(target_id).strip() if target_id is not None else None
+        target_user_is_existing_owner = False
+    if scope == "conversation":
+        target_user_id = None
+        target_nickname = None
+    elif (
+        target_user_id is not None
+        and target_user_id not in known_user_ids
+        and not target_user_is_existing_owner
+    ):
+        return None
 
     return LongTermMemoryOperation(
         action=action,  # type: ignore[arg-type]
@@ -323,6 +480,8 @@ def _parse_operation(
         content=content,
         kind=kind,  # type: ignore[arg-type]
         confidence=confidence,
+        target_user_id=target_user_id,
+        target_nickname=target_nickname,
     )
 
 

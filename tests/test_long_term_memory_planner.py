@@ -58,7 +58,13 @@ def global_records():
         LongTermMemoryRecord(
             id="mem-global-user-1",
             content="小明在上大学",
-            metadata={"scope": "user", "kind": "other"},
+            metadata={
+                "scope": "user",
+                "kind": "other",
+                "user_id": "qq_user:qq_group:888888:654321",
+                "target_user_id": "654321",
+                "target_nickname": "小明",
+            },
         ),
         LongTermMemoryRecord(
             id="mem-global-conv-1",
@@ -205,6 +211,61 @@ async def test_planner_prompt_includes_conversation_archive_as_reference_only():
     assert "你记得我之前说的苹果吗？" in prompt
 
 
+async def test_planner_prompt_includes_known_users_from_context_history_and_archive():
+    llm = FakePlannerLLM({"operations": []})
+    planner = LongTermMemoryPlanner(llm=llm)
+
+    await planner.plan(
+        user_message="小明不吃辣，帮他记一下",
+        context=context(),
+        user_memories=[],
+        conversation_memories=[],
+        short_term_messages=[
+            ChatMessage(
+                conversation_id="qq_group:888888",
+                role="user",
+                content="我今天不吃辣",
+                user_id="654321",
+                nickname="小明",
+                message_id="m0",
+                timestamp=122.0,
+            ),
+            ChatMessage(
+                conversation_id="qq_group:888888",
+                role="user",
+                content="我也叫小明",
+                user_id="777777",
+                nickname="小明",
+                message_id="m-duplicate",
+                timestamp=121.0,
+            ),
+        ],
+        conversation_archive=[
+            ConversationArchiveRecord(
+                content="我不喝咖啡",
+                role="user",
+                user_id="888888",
+                nickname="小红",
+                message_id="old-1",
+                timestamp=120.0,
+                score=0.91,
+            )
+        ],
+    )
+
+    prompt = llm.prompts[0]
+    assert "已知用户（用于判断 user 记忆目标；昵称只是显示名，重名时不能靠昵称唯一定位）：" in prompt
+    assert '"user_id": "123456"' in prompt
+    assert '"nickname": "阿咳"' in prompt
+    assert '"is_current_user": true' in prompt
+    assert '"user_id": "654321"' in prompt
+    assert '"nickname": "小明"' in prompt
+    assert '"nickname_is_unique": false' in prompt
+    assert '"user_id": "888888"' in prompt
+    assert '"nickname": "小红"' in prompt
+    assert "目标用户可由明确 QQ号 或唯一昵称匹配确定" in prompt
+
+
 async def test_planner_prompt_includes_assistant_reply_only_as_confirmation_context():
     llm = FakePlannerLLM({"operations": []})
     planner = LongTermMemoryPlanner(llm=llm)
@@ -283,6 +344,113 @@ async def test_planner_skips_invalid_operations_and_invalid_update_target():
             scope="conversation",
             target_id=None,
             content="跳过",
+            kind="other",
+            confidence=0.9,
+        )
+    ]
+
+
+async def test_planner_parses_target_user_fields_for_user_operation():
+    planner = LongTermMemoryPlanner(
+        llm=FakePlannerLLM(
+            {
+                "operations": [
+                    {
+                        "action": "add",
+                        "scope": "user",
+                        "target_user_id": "654321",
+                        "target_nickname": "小明",
+                        "target_id": None,
+                        "content": "不吃辣",
+                        "kind": "preference",
+                        "confidence": 0.93,
+                    }
+                ]
+            }
+        )
+    )
+
+    operations = await planner.plan(
+        user_message="小明不吃辣，帮他记一下",
+        context=context(),
+        user_memories=[],
+        conversation_memories=[],
+        short_term_messages=[
+            ChatMessage(
+                conversation_id="qq_group:888888",
+                role="user",
+                content="我不吃辣",
+                user_id="654321",
+                nickname="小明",
+                message_id="m0",
+                timestamp=122.0,
+            )
+        ],
+    )
+
+    assert operations == [
+        LongTermMemoryOperation(
+            action="add",
+            scope="user",
+            target_id=None,
+            target_user_id="654321",
+            target_nickname="小明",
+            content="不吃辣",
+            kind="preference",
+            confidence=0.93,
+        )
+    ]
+
+
+async def test_planner_rejects_user_operation_for_unknown_target_user():
+    planner = LongTermMemoryPlanner(
+        llm=FakePlannerLLM(
+            {
+                "operations": [
+                    {
+                        "action": "add",
+                        "scope": "user",
+                        "target_user_id": "999999",
+                        "content": "不吃辣",
+                        "kind": "preference",
+                        "confidence": 0.93,
+                    },
+                    {
+                        "action": "add",
+                        "scope": "conversation",
+                        "content": "群内有成员不吃辣，具体成员未唯一确认",
+                        "kind": "other",
+                        "confidence": 0.9,
+                    },
+                ]
+            }
+        )
+    )
+
+    operations = await planner.plan(
+        user_message="有个小明不吃辣",
+        context=context(),
+        user_memories=[],
+        conversation_memories=[],
+        short_term_messages=[
+            ChatMessage(
+                conversation_id="qq_group:888888",
+                role="user",
+                content="我叫小明",
+                user_id="654321",
+                nickname="小明",
+                message_id="m0",
+                timestamp=122.0,
+            )
+        ],
+    )
+
+    assert operations == [
+        LongTermMemoryOperation(
+            action="add",
+            scope="conversation",
+            target_id=None,
+            content="群内有成员不吃辣，具体成员未唯一确认",
             kind="other",
             confidence=0.9,
         )
@@ -466,6 +634,8 @@ async def test_planner_prompt_includes_global_memories():
     assert "mem-global-user-1" in prompt
     assert "小明在上大学" in prompt
     assert '"scope": "user"' in prompt
+    assert '"owner_user_id": "654321"' in prompt
+    assert '"owner_nickname": "小明"' in prompt
     assert "mem-global-conv-1" in prompt
     assert "当前会话曾聊过旧项目" in prompt
     assert '"scope": "conversation"' in prompt
@@ -476,7 +646,7 @@ def test_planner_system_prompt_requires_natural_memory_content():
     assert "不要写成“用户说过/用户认为/用户希望/助手应该/助手在回复中”" in PLANNER_SYSTEM_PROMPT
     assert "本会话回复时，每句话末尾加上" in PLANNER_SYSTEM_PROMPT
     assert "不喜欢把「猪」当作贬义或骂人的表达" in PLANNER_SYSTEM_PROMPT
-    assert '"content":"偏好用中文交流"' in PLANNER_SYSTEM_PROMPT
+    assert '"content":"不吃辣"' in PLANNER_SYSTEM_PROMPT
     assert '"content":"用户偏好用中文交流"' not in PLANNER_SYSTEM_PROMPT
 
 
@@ -519,6 +689,8 @@ async def test_planner_accepts_update_and_delete_for_global_memory_ids():
             action="update",
             scope="user",
             target_id="mem-global-user-1",
+            target_user_id="654321",
+            target_nickname="小明",
             content="小明已经大学毕业",
             kind="other",
             confidence=0.92,

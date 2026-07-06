@@ -3,10 +3,13 @@ from __future__ import annotations
 import asyncio
 import math
 import re
+from dataclasses import replace
 from difflib import SequenceMatcher
 from typing import Any
 
 from qq_group_chatter.models import (
+    ChatMessage,
+    ConversationArchiveRecord,
     ConversationContext,
     ErrorNoticeContext,
     LongTermMemoryBundle,
@@ -263,6 +266,23 @@ class LongTermMemoryService:
             ).inc()
             return None
 
+        scope_records = self._existing_records_for_scope(operation.scope, existing_memories) or []
+        operation = _operation_with_existing_owner(
+            operation,
+            scope_records,
+            job.context,
+        )
+        if not self._is_known_user_operation(
+            operation,
+            job,
+        ) and not _operation_targets_existing_owner(operation, scope_records, job.context):
+            MEMORY_CANDIDATES_TOTAL.labels(
+                scope=operation.scope,
+                kind=operation.kind,
+                result="validation_skip",
+            ).inc()
+            return None
+
         if operation.action == "skip":
             MEMORY_CANDIDATES_TOTAL.labels(
                 scope=operation.scope,
@@ -272,7 +292,11 @@ class LongTermMemoryService:
             return None
 
         target_id = self._target_memory_id(operation, job.context)
-        existing_records = self._existing_records_for_scope(operation.scope, existing_memories) or []
+        existing_records = self._existing_records_for_operation(
+            operation,
+            existing_memories,
+            job.context,
+        ) or []
         existing = [record.content for record in existing_records]
         if operation.action == "add" and self._is_duplicate(operation.content, existing):
             MEMORY_DUPLICATE_SKIPS_TOTAL.labels(scope=operation.scope).inc()
@@ -325,7 +349,16 @@ class LongTermMemoryService:
         prune_notice = await self._prune_old_memories(target_id, operation.scope)
         if prune_notice is not None:
             return prune_notice
-        return LongTermMemoryRecord(id=None, content=operation.content, metadata={"scope": operation.scope})
+        return LongTermMemoryRecord(
+            id=None,
+            content=operation.content,
+            metadata={
+                "scope": operation.scope,
+                "user_id": target_id,
+                "target_user_id": _operation_target_user_id(operation, job.context),
+                "target_nickname": _operation_target_nickname(operation, job.context),
+            },
+        )
 
     async def _add_memory(
         self,
@@ -380,6 +413,8 @@ class LongTermMemoryService:
             "message_id": job.context.message_id,
             "source_user_id": job.context.user_id,
             "source_nickname": _display_nickname(job.context.nickname),
+            "target_user_id": _operation_target_user_id(operation, job.context),
+            "target_nickname": _operation_target_nickname(operation, job.context),
             "scope": operation.scope,
             "kind": operation.kind,
             "last_seen_at": job.context.timestamp,
@@ -530,13 +565,24 @@ class LongTermMemoryService:
             return False
         return not _contains_sensitive_content(operation.content)
 
+    def _is_known_user_operation(
+        self,
+        operation: LongTermMemoryOperation,
+        job: LongTermMemoryIngestionJob,
+    ) -> bool:
+        if operation.scope != "user":
+            return True
+        if operation.target_user_id is None:
+            return True
+        return operation.target_user_id in _known_user_ids(job)
+
     def _target_memory_id(
         self,
         operation: LongTermMemoryOperation,
         context: ConversationContext,
     ) -> str:
         if operation.scope == "user":
-            return user_memory_id(context)
+            return _target_user_memory_id(operation, context)
         return conversation_memory_id(context)
 
     def _existing_records_for_scope(
@@ -565,6 +611,22 @@ class LongTermMemoryService:
                 ],
             ]
         return []
+
+    def _existing_records_for_operation(
+        self,
+        operation: LongTermMemoryOperation,
+        bundle: LongTermMemoryBundle | None,
+        context: ConversationContext,
+    ) -> list[LongTermMemoryRecord] | None:
+        records = self._existing_records_for_scope(operation.scope, bundle)
+        if records is None or operation.scope != "user":
+            return records
+        target_owner = self._target_memory_id(operation, context)
+        return [
+            record
+            for record in records
+            if _record_owner_memory_id(record, context) in {None, target_owner}
+        ]
 
     def _is_duplicate(self, content: str, existing_memories: list[str]) -> bool:
         normalized_content = _normalize_text(content)
@@ -717,6 +779,138 @@ def _is_current_conversation_owner(
     return owner.startswith(f"qq_user:{context.conversation_id}:") or owner == conversation_memory_id(context)
 
 
+def _target_user_memory_id(
+    operation: LongTermMemoryOperation,
+    context: ConversationContext,
+) -> str:
+    if operation.target_user_id is None:
+        return user_memory_id(context)
+    return f"qq_user:{context.conversation_id}:{operation.target_user_id}"
+
+
+def _record_owner_memory_id(
+    record: LongTermMemoryRecord,
+    context: ConversationContext,
+) -> str | None:
+    owner = record.metadata.get("user_id")
+    if owner is not None:
+        return str(owner)
+    target_user_id = record.metadata.get("target_user_id")
+    if target_user_id is not None:
+        return f"qq_user:{context.conversation_id}:{target_user_id}"
+    if record.metadata.get("scope") == "user":
+        return user_memory_id(context)
+    return None
+
+
+def _operation_target_user_id(
+    operation: LongTermMemoryOperation,
+    context: ConversationContext,
+) -> str | None:
+    if operation.scope != "user":
+        return None
+    return operation.target_user_id or context.user_id
+
+
+def _operation_target_nickname(
+    operation: LongTermMemoryOperation,
+    context: ConversationContext,
+) -> str | None:
+    if operation.scope != "user":
+        return None
+    return operation.target_nickname or _display_nickname(context.nickname)
+
+
+def _operation_with_existing_owner(
+    operation: LongTermMemoryOperation,
+    records: list[LongTermMemoryRecord],
+    context: ConversationContext,
+) -> LongTermMemoryOperation:
+    if operation.scope != "user" or operation.action not in {"update", "delete"}:
+        return operation
+    target_record = _find_record(records, operation.target_id)
+    if target_record is None:
+        return operation
+    owner_user_id = _record_owner_user_id(target_record, context)
+    if owner_user_id is None or operation.target_user_id is not None:
+        return operation
+    return replace(
+        operation,
+        target_user_id=owner_user_id,
+        target_nickname=operation.target_nickname
+        or _record_owner_nickname(target_record),
+    )
+
+
+def _operation_targets_existing_owner(
+    operation: LongTermMemoryOperation,
+    records: list[LongTermMemoryRecord],
+    context: ConversationContext,
+) -> bool:
+    if operation.scope != "user" or operation.action not in {"update", "delete"}:
+        return False
+    target_record = _find_record(records, operation.target_id)
+    if target_record is None:
+        return False
+    owner_user_id = _record_owner_user_id(target_record, context)
+    return owner_user_id is not None and operation.target_user_id == owner_user_id
+
+
+def _record_owner_user_id(
+    record: LongTermMemoryRecord,
+    context: ConversationContext,
+) -> str | None:
+    target_user_id = record.metadata.get("target_user_id")
+    if target_user_id is not None:
+        return str(target_user_id)
+    owner = _record_owner_memory_id(record, context)
+    if owner is None:
+        return None
+    prefix = f"qq_user:{context.conversation_id}:"
+    if owner.startswith(prefix):
+        return owner[len(prefix) :]
+    return None
+
+
+def _record_owner_nickname(record: LongTermMemoryRecord) -> str | None:
+    for key in ("target_nickname", "source_nickname"):
+        value = record.metadata.get(key)
+        if value is None:
+            continue
+        text = str(value).strip()
+        if text:
+            return text
+    return None
+
+
+def _known_user_ids(job: LongTermMemoryIngestionJob) -> set[str]:
+    user_ids = {job.context.user_id}
+    for message in job.short_term_messages:
+        _add_known_message_user(user_ids, message)
+    for record in job.conversation_archive:
+        _add_known_archive_user(user_ids, record)
+    return user_ids
+
+
+def _add_known_message_user(user_ids: set[str], message: ChatMessage) -> None:
+    if message.role != "user":
+        return
+    text = str(message.user_id or "").strip()
+    if text:
+        user_ids.add(text)
+
+
+def _add_known_archive_user(
+    user_ids: set[str],
+    record: ConversationArchiveRecord,
+) -> None:
+    if record.role != "user":
+        return
+    text = str(record.user_id or "").strip()
+    if text:
+        user_ids.add(text)
+
+
 def _rerank_memories(
     records: list[LongTermMemoryRecord],
     *,
@@ -765,6 +959,8 @@ def _new_memory_metadata(
         "message_id": job.context.message_id,
         "source_user_id": job.context.user_id,
         "source_nickname": _display_nickname(job.context.nickname),
+        "target_user_id": _operation_target_user_id(operation, job.context),
+        "target_nickname": _operation_target_nickname(operation, job.context),
         "scope": operation.scope,
         "kind": operation.kind,
         "source_created_at": job.context.timestamp,

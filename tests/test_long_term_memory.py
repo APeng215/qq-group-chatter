@@ -660,6 +660,8 @@ async def test_ingestion_calls_planner_once_and_adds_operation_asynchronously():
                 "message_id": "m1",
                 "source_user_id": "123456",
                 "source_nickname": "阿咳",
+                "target_user_id": "123456",
+                "target_nickname": "阿咳",
                 "scope": "user",
                 "kind": "preference",
                 "source_created_at": 123.0,
@@ -971,6 +973,8 @@ async def test_ingestion_updates_existing_memory_when_planner_returns_update():
                 "message_id": "m1",
                 "source_user_id": "123456",
                 "source_nickname": "阿咳",
+                "target_user_id": "123456",
+                "target_nickname": "阿咳",
                 "scope": "user",
                 "last_seen_at": 123.0,
                 "last_seen_message_id": "m1",
@@ -1069,6 +1073,8 @@ async def test_ingestion_updates_global_user_memory():
 
     assert mem0.update_calls[0]["memory_id"] == "mem-global-user-1"
     assert mem0.update_calls[0]["data"] == "小明已经大学毕业"
+    assert mem0.update_calls[0]["metadata"]["target_user_id"] == "654321"
+    assert mem0.get_all_calls[0]["filters"] == {"user_id": "qq_user:qq_group:888888:654321"}
 
 
 async def test_ingestion_deletes_global_conversation_memory():
@@ -1154,6 +1160,121 @@ async def test_ingestion_adds_when_planner_returns_add():
 
     assert mem0.add_calls[0]["messages"] == [{"role": "user", "content": "用户不吃辣"}]
     assert mem0.update_calls == []
+
+
+async def test_ingestion_adds_other_person_memory_to_target_user_owner():
+    mem0 = FakeMem0Client()
+    planner = FakePlanner(
+        [
+            LongTermMemoryOperation(
+                action="add",
+                scope="user",
+                target_id=None,
+                target_user_id="654321",
+                target_nickname="小明",
+                content="不吃辣",
+                kind="preference",
+                confidence=0.92,
+            )
+        ]
+    )
+    service = LongTermMemoryService(mem0_client=mem0, planner=planner)
+    await service.start()
+
+    await service.enqueue_ingestion(
+        LongTermMemoryIngestionJob(
+            context=context(),
+            user_message="小明不吃辣，帮他记一下",
+            short_term_messages=[
+                ChatMessage(
+                    conversation_id="qq_group:888888",
+                    role="user",
+                    content="我不吃辣",
+                    user_id="654321",
+                    nickname="小明",
+                    message_id="m0",
+                    timestamp=122.0,
+                )
+            ],
+            existing_memories=LongTermMemoryBundle(user_memories=[], conversation_memories=[]),
+        )
+    )
+    await asyncio.wait_for(service.join(), timeout=1)
+    await service.stop()
+
+    assert mem0.add_calls[0]["user_id"] == "qq_user:qq_group:888888:654321"
+    assert mem0.add_calls[0]["metadata"]["source_user_id"] == "123456"
+    assert mem0.add_calls[0]["metadata"]["source_nickname"] == "阿咳"
+    assert mem0.add_calls[0]["metadata"]["target_user_id"] == "654321"
+    assert mem0.add_calls[0]["metadata"]["target_nickname"] == "小明"
+    assert mem0.get_all_calls[0]["filters"] == {"user_id": "qq_user:qq_group:888888:654321"}
+
+
+async def test_ingestion_skips_user_operation_for_unknown_target_user():
+    mem0 = FakeMem0Client()
+    planner = FakePlanner(
+        [
+            LongTermMemoryOperation(
+                action="add",
+                scope="user",
+                target_id=None,
+                target_user_id="999999",
+                target_nickname="陌生人",
+                content="不吃辣",
+                kind="preference",
+                confidence=0.92,
+            )
+        ]
+    )
+    service = LongTermMemoryService(mem0_client=mem0, planner=planner)
+    await service.start()
+
+    await service.enqueue_ingestion(
+        LongTermMemoryIngestionJob(
+            context=context(),
+            user_message="陌生人不吃辣",
+            existing_memories=LongTermMemoryBundle(user_memories=[], conversation_memories=[]),
+        )
+    )
+    await asyncio.wait_for(service.join(), timeout=1)
+    await service.stop()
+
+    assert mem0.add_calls == []
+    assert mem0.update_calls == []
+    assert mem0.get_all_calls == []
+
+
+async def test_ingestion_allows_conversation_fallback_for_uncertain_personal_fact():
+    mem0 = FakeMem0Client()
+    planner = FakePlanner(
+        [
+            LongTermMemoryOperation(
+                action="add",
+                scope="conversation",
+                target_id=None,
+                content="群内有成员不吃辣，具体成员未唯一确认",
+                kind="other",
+                confidence=0.92,
+            )
+        ]
+    )
+    service = LongTermMemoryService(mem0_client=mem0, planner=planner)
+    await service.start()
+
+    await service.enqueue_ingestion(
+        LongTermMemoryIngestionJob(
+            context=context(),
+            user_message="有个人不吃辣，但我忘了是谁",
+            existing_memories=LongTermMemoryBundle(user_memories=[], conversation_memories=[]),
+        )
+    )
+    await asyncio.wait_for(service.join(), timeout=1)
+    await service.stop()
+
+    assert mem0.add_calls[0]["user_id"] == "qq_conversation:qq_group:888888"
+    assert mem0.add_calls[0]["messages"] == [
+        {"role": "user", "content": "群内有成员不吃辣，具体成员未唯一确认"}
+    ]
 
 
 async def test_ingestion_skips_when_planner_returns_skip():

@@ -5,6 +5,9 @@
 - QQ号：{current_user_qq}
 - 昵称：{current_user_nickname}
 
+已知用户（用于判断 user 记忆目标；昵称只是显示名，重名时不能靠昵称唯一定位）：
+{known_users_json}
+
 用户消息：
 {user_message}
 
@@ -24,5 +27,5 @@
 已有 conversation 记忆（仅供内部决策，id 只能用于 update/delete 定位）：
 {conversation_memories_json}
 
-当前 conversation 内其他相关记忆（仅供内部决策，id 只能用于 update/delete 定位；新增他人事实或公共事实时优先写 conversation）：
+当前 conversation 内其他相关记忆（仅供内部决策，id 只能用于 update/delete 定位；user 记忆里的 owner_user_id / owner_nickname 表示记忆所属用户）：
 {global_memories_json}

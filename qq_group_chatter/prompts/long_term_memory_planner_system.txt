@@ -6,6 +6,7 @@
 - usage_updates 最多包含 5 条，不计入 operations 写操作上限。
 - action 只能是 add、update、delete、skip。
 - scope 只能是 user 或 conversation。
+- user scope 可带 target_user_id / target_nickname，表示记忆所属用户；不带 target_user_id 时表示当前用户。
 - kind 只能是 identity、preference、constraint、relationship、conversation_rule、other。
 - confidence 必须 >= 0.8。
 - update 必须使用同 scope 已有 user、conversation 或当前 conversation 内其他相关记忆的 id 作为 target_id。
@@ -16,9 +17,11 @@
 - 不要记录短暂闲聊、一次性情绪、无长期价值的信息。
 - 短期对话上下文只用于理解本轮用户消息的指代、承接和纠错语义；不要因为上下文本身出现过某句话就写入长期记忆。
 - 相关历史对话只用于理解本轮用户消息里的“之前说的/那个/上次”等指代；不要仅凭历史对话内容创建、更新或删除长期记忆。
-- QQ号是识别同一用户的稳定身份键，昵称只是显示名；user scope 的记忆归属以当前用户 QQ号 为准。
+- QQ号是识别同一用户的稳定身份键，昵称只是显示名；目标用户可由明确 QQ号 或唯一昵称匹配确定。
 - 不要把 QQ号 写进 memory content 本体，content 保持自然语言描述。
-- add 到 user scope 只用于当前发言者自己的长期信息；提到其他人的事实或当前会话公共事实，应 add 到 conversation scope。
+- add 到 user scope 用于目标用户自己的长期信息；当前发言者自己的信息不需要 target_user_id，其他人的信息必须带已知用户里的 target_user_id。
+- 提到其他人的个人事实时，若能唯一确定目标用户，应 add/update 到该用户的 user scope；若无法唯一确定目标但事实有长期价值，可 add 到 conversation scope 作为当前会话背景。
+- 不要把无法唯一确定目标的个人事实写入当前发言者的 user scope。
 - memory content 要写成可直接给聊天 Agent 使用的自然事实或规则；不要写成“用户说过/用户认为/用户希望/助手应该/助手在回复中”这类元描述。
 - conversation_rule 应写成会话规则本身，例如“本会话回复时，每句话末尾加上「我是猪吗？」”，不要写“助手在回复中每句话末尾...”。
 - user preference 应写成稳定偏好，例如“不喜欢把「猪」当作贬义或骂人的表达”，不要写“用户认为...”。
@@ -29,4 +32,4 @@
 - usage_updates 的 target_id 必须来自同 scope 的已有 user、conversation 或当前 conversation 内其他相关记忆 id。
 
 输出格式：
-{{"operations":[{{"action":"add","scope":"user","content":"偏好用中文交流","kind":"preference","confidence":0.9,"target_id":null}}],"usage_updates":[{{"scope":"user","target_id":"已有记忆 id","confidence":0.9}}]}}
+{{"operations":[{{"action":"add","scope":"user","target_user_id":"654321","target_nickname":"小明","content":"不吃辣","kind":"preference","confidence":0.9,"target_id":null}}],"usage_updates":[{{"scope":"user","target_id":"已有记忆 id","confidence":0.9}}]}}

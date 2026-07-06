@@ -224,6 +224,8 @@ http://127.0.0.1:8080/api/llm-traces
 - 会话记忆 ID：`qq_conversation:{conversation_id}`。
 - 只处理用户消息，不处理 assistant 回复。
 - 写入 Mem0 时使用 `infer=False`，由项目自己的 planner 决定 add/update/skip。
+- user 记忆可以属于当前发言者，也可以属于同一会话内可唯一确定的其他目标用户；planner 会通过 `target_user_id` 指定目标用户。
+- 如果提到的是他人个人事实且能唯一确定 QQ，会写入该目标用户的 user 记忆；如果无法唯一确定目标用户但有长期价值，可作为 conversation 背景记忆。
 - 召回时先从 Mem0 获取候选，再按语义分和长期记忆最近使用/更新时间做时间衰减重排。
 - 回复发送成功后的长期记忆 planner 仍只调用一次；会携带本轮用户消息、短期上下文、长期记忆快照、原始对话语义归档快照和 assistant 回复。同一次结果里可用 `usage_updates` 标记本轮明显用到的记忆，后台异步刷新 `last_recalled_at` 和 `recall_count`。
 - Mem0 查询必须带 `user_id`、`agent_id`、`run_id` 之一；同会话全局相关记忆查询使用 `{"user_id": "*", "conversation_id": context.conversation_id}`，再由项目代码过滤和去重。
