@@ -49,7 +49,7 @@ async def test_deepseek_llm_calls_v4_pro_with_thinking_enabled_by_default():
     result = await llm.ainvoke("hello")
 
     assert result == "OK"
-    assert client.calls[0]["model"] == "deepseek-v4-pro"
+    assert client.calls[0]["model"] == "deepseek-flash"
     assert "max_tokens" not in client.calls[0]
     assert client.calls[0]["extra_body"] == {"thinking": {"type": "enabled"}}
     assert client.calls[0]["stream"] is False
@@ -153,7 +153,7 @@ async def test_deepseek_llm_records_prompt_response_and_usage():
     assert trace["component"] == "chat_agent"
     assert trace["operation"] == "decision"
     assert trace["current_user_message"] == "[QQ:123456 昵称:tester] hello"
-    assert trace["model"] == "deepseek-v4-pro"
+    assert trace["model"] == "deepseek-flash"
     assert trace["thinking"] == "enabled"
     assert trace["temperature"] == 0.7
     assert trace["response_format"] == {"type": "json_object"}
@@ -236,8 +236,27 @@ def test_factory_uses_env_key_and_default_model(monkeypatch):
     llm = create_deepseek_chat_llm()
 
     assert llm is not None
-    assert llm.model == "deepseek-v4-pro"
+    assert llm.model == "deepseek-flash"
     assert llm.thinking == "enabled"
+
+
+def test_factory_reads_model_from_env_and_allows_explicit_override(monkeypatch):
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "secret")
+    monkeypatch.setenv("DEEPSEEK_MODEL", "deepseek-v4-flash")
+
+    assert create_deepseek_chat_llm().model == "deepseek-v4-flash"
+    assert create_deepseek_chat_llm(model="deepseek-v4-pro").model == "deepseek-v4-pro"
+
+
+def test_factory_reads_model_from_dotenv(monkeypatch):
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "secret")
+    monkeypatch.delenv("DEEPSEEK_MODEL", raising=False)
+    monkeypatch.setattr(
+        "qq_group_chatter.agent.deepseek_llm._read_dotenv_key",
+        lambda name="DEEPSEEK_API_KEY": "deepseek-v4-flash" if name == "DEEPSEEK_MODEL" else None,
+    )
+
+    assert create_deepseek_chat_llm().model == "deepseek-v4-flash"
 
 
 def test_factory_allows_disabling_thinking_from_env(monkeypatch):

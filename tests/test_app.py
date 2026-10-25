@@ -57,7 +57,7 @@ def test_default_orchestrator_uses_deepseek_when_key_exists(monkeypatch):
 
     orchestrator = create_default_orchestrator(mem0_client=NoopMem0Client())
 
-    assert orchestrator._chat_agent._llm.model == "deepseek-v4-pro"
+    assert orchestrator._chat_agent._llm.model == "deepseek-flash"
     assert orchestrator._chat_agent._llm.thinking == "enabled"
 
 

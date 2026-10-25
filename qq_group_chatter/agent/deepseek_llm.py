@@ -17,7 +17,7 @@ DEEPSEEK_SYSTEM_PROMPT_TEMPLATE = load_prompt("deepseek_system.txt")
 @dataclass
 class DeepSeekChatLLM:
     api_key: str
-    model: str = "deepseek-v4-pro"
+    model: str = "deepseek-flash"
     thinking: ThinkingMode = "enabled"
     temperature: float = 0.7
     max_tokens: int | None = None
@@ -117,7 +117,7 @@ class DeepSeekChatLLM:
 def create_deepseek_chat_llm(
     *,
     api_key: str | None = None,
-    model: str = "deepseek-v4-pro",
+    model: str | None = None,
     thinking: ThinkingMode | None = None,
     max_tokens: int | None = None,
     response_format: dict[str, Any] | None = None,
@@ -128,11 +128,19 @@ def create_deepseek_chat_llm(
         return None
     return DeepSeekChatLLM(
         api_key=resolved_key,
-        model=model,
+        model=model or _read_model(),
         thinking=thinking or _read_thinking_mode(),
         max_tokens=max_tokens,
         response_format=response_format,
         trace_store=trace_store,
+    )
+
+
+def _read_model() -> str:
+    return (
+        os.getenv("DEEPSEEK_MODEL")
+        or _read_dotenv_key("DEEPSEEK_MODEL")
+        or "deepseek-flash"
     )
 
 

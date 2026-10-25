@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from qq_group_chatter.agent.chat_agent import ChatAgent
-from qq_group_chatter.agent.deepseek_llm import create_deepseek_chat_llm, _read_dotenv_key
+from qq_group_chatter.agent.deepseek_llm import create_deepseek_chat_llm, _read_dotenv_key, _read_model
 from qq_group_chatter.llm_tracing import LLMTraceStore
 from qq_group_chatter.orchestrator import ChatOrchestrator
 from qq_group_chatter.services.conversation_archive import ConversationArchiveService
@@ -135,7 +135,7 @@ def _build_mem0_config(
             "provider": "deepseek",
             "config": {
                 "api_key": deepseek_key,
-                "model": "deepseek-v4-pro",
+                "model": _read_model(),
                 "temperature": 0.0,
                 "max_tokens": 1000,
                 "deepseek_base_url": "https://api.deepseek.com",
@@ -182,7 +182,6 @@ def create_default_long_term_memory_service(
         planner_llm
         if planner_llm is not None
         else create_deepseek_chat_llm(
-            model="deepseek-v4-pro",
             trace_store=llm_trace_store,
         )
     )

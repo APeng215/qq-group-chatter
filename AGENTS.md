@@ -4,7 +4,7 @@
 
 - 本项目是 NoneBot2 + OneBot v11 的 QQ 群聊/私聊机器人。
 - Agent 调用走普通 LangChain/LLM 封装；不要引入 LangGraph、checkpointer，或把 Mem0 暴露成 Agent tool。
-- 默认聊天模型是 `deepseek-v4-pro`，`thinking=enabled`。可通过 `DEEPSEEK_THINKING=false` 关闭；除非用户明确要求，不要改模型。
+- 默认聊天模型是 `deepseek-flash`，可通过 `DEEPSEEK_MODEL` 配置；`thinking=enabled`，可通过 `DEEPSEEK_THINKING=false` 关闭；除非用户明确要求，不要改默认模型。
 - 密钥只允许来自环境变量或本地 `.env`；不要写进代码、测试快照、日志或提交内容。
 
 ## 入口和链路
@@ -49,7 +49,7 @@
 - 长期 ID：
   - 用户：`qq_user:{conversation_id}:{user_id}`
   - 会话：`qq_conversation:{conversation_id}`
-- 长期记忆 planner：`qq_group_chatter/services/long_term_memory_planner.py`，默认 `deepseek-v4-pro` + `thinking=enabled`；可通过 `DEEPSEEK_THINKING=false` 关闭。一次调用内完成提取判断和 add/update/skip 决策，不直接给聊天 Agent。
+- 长期记忆 planner：`qq_group_chatter/services/long_term_memory_planner.py`，默认 `deepseek-flash` + `thinking=enabled`；模型跟随 `DEEPSEEK_MODEL`，可通过 `DEEPSEEK_THINKING=false` 关闭思考。一次调用内完成提取判断和 add/update/skip 决策，不直接给聊天 Agent。
 - user scope 记忆可以属于当前发言者或同 conversation 内可唯一确定的目标用户；他人个人事实应写入目标用户的 user 记忆，无法唯一确定目标但有长期价值时可降级写入 conversation。
 - user scope 操作可带 `target_user_id` / `target_nickname`；规则层必须校验 `target_user_id` 来自当前用户、短期上下文或原始对话语义归档的已知用户，不能把未知目标写到当前发言者名下。
 - 长期记忆写入 Mem0 时使用 `infer=False`；记忆提取、合并和跳过决策由项目自己的 `LongTermMemoryPlanner` 负责，不依赖 Mem0 内部 LLM 自动推理。
@@ -75,9 +75,9 @@
 - `DEEPSEEK_THINKING` 可选：默认 `true`；设为 `false` 可关闭项目自己发起的 DeepSeek 调用的 thinking；env 示例统一用 `true` / `false`，解析层兼容 `enabled` / `disabled`。
 - `MEM0_FASTEMBED_MODEL` 可选：默认 `BAAI/bge-small-zh-v1.5`。
 - 当前默认：
-  - ChatAgent：`deepseek-v4-pro` + `thinking=enabled`
-  - LongTermMemoryPlanner：`deepseek-v4-pro` + `thinking=enabled`
-  - Mem0 内部 LLM provider：`deepseek`，模型 `deepseek-v4-pro`
+  - ChatAgent：`deepseek-flash` + `thinking=enabled`，模型跟随 `DEEPSEEK_MODEL`
+  - LongTermMemoryPlanner：`deepseek-flash` + `thinking=enabled`，模型跟随 `DEEPSEEK_MODEL`
+  - Mem0 内部 LLM provider：`deepseek`，模型跟随 `DEEPSEEK_MODEL`，默认 `deepseek-flash`
   - Mem0 embedding：本地 `fastembed`
   - 本地向量库：`.mem0/qdrant`
 - `.env` 本地使用且已 ignore；提交示例只改 `.env.example`。
