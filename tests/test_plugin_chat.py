@@ -116,6 +116,31 @@ def test_context_from_group_event_captures_reply_message_id(monkeypatch):
     assert context.reply_to_message_id == "m0"
 
 
+@pytest.mark.parametrize("message_type", ["private", "group"])
+@pytest.mark.parametrize("reply", [SimpleNamespace(message_id=987654), {"message_id": 987654}])
+def test_context_reads_reply_after_adapter_removes_segment(monkeypatch, message_type, reply):
+    class GroupEvent:
+        pass
+
+    class PrivateEvent:
+        pass
+
+    monkeypatch.setattr("qq_group_chatter.plugins.chat.GroupMessageEvent", GroupEvent)
+    monkeypatch.setattr("qq_group_chatter.plugins.chat.PrivateMessageEvent", PrivateEvent)
+    source_event = PrivateEvent() if message_type == "private" else GroupEvent()
+    source_event.group_id = 888888
+    source_event.user_id = 123456
+    source_event.self_id = 654321
+    source_event.message_id = 987655
+    source_event.time = 123.0
+    source_event.sender = SimpleNamespace(nickname="tester")
+    source_event.message = [{"type": "text", "data": {"text": "我引用了谁"}}]
+    source_event.reply = reply
+    context = _context_from_event(source_event)
+    assert context.reply_to_message_id == "987654"
+    assert context.conversation_type == message_type
+
+
 def test_context_from_group_event_uses_group_card_before_nickname(monkeypatch):
     class FakeGroupMessageEvent:
         pass

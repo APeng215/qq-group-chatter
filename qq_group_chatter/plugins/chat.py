@@ -131,6 +131,12 @@ def _message_text_from_event(event) -> str:
 
 
 def _reply_to_message_id_from_event(event) -> str | None:
+    # OneBot preprocessing extracts the reply and removes its message segment.
+    reply = getattr(event, "reply", None)
+    if reply is not None:
+        message_id = _optional_event_text(_segment_value(reply, "message_id"))
+        if message_id is not None:
+            return message_id
     segments = getattr(event, "message", None)
     if segments is None:
         return None
