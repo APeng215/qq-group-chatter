@@ -508,3 +508,15 @@ def test_unread_images_have_reason_and_no_number(status, reason):
     snapshot = ImageSnapshot(attachments=[{"message_id": "m", "position": 1, "status": status}])
     assert snapshot.render_content("正文", "m") == f"正文 [图片未读取：{reason}]"
     assert snapshot.render_content("其他消息", "other") == "其他消息"
+    assert snapshot.render_content("[图片] 回答我", "m") == f"[图片未读取：{reason}] 回答我"
+
+
+async def test_image_placeholders_are_rendered_in_place_without_duplicate_labels():
+    service = ImageUnderstandingService(path=workdir(), downloader=download)
+    images = await prepared(service, 2)
+    snapshot = service.snapshot([message("current", images)], context())
+    assert snapshot.render_content("[图片] 回答我 [图片]", "current") == "[图1] 回答我 [图2]"
+    assert snapshot.render_content("[图片]", "current") == "[图1] [图2]"
+    assert snapshot.render_content("[图片] [图片] [图片]", "current") == "[图1] [图2] [图片]"
+    assert snapshot.render_content("字面量[图片]", "current") == "字面量[图片] [图1] [图2]"
+    assert snapshot.render_content("[图片] 回答我", "unknown") == "[图片] 回答我"

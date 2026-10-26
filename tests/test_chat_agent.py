@@ -469,7 +469,7 @@ async def test_chat_agent_passes_trace_context_for_decision_call():
         "operation": "decision",
         "current_user_message": "[QQ:123456 昵称:tester] hello",
     }
-    assert llm.calls[0]["response_format"] == {"type": "json_object"}
+    assert llm.calls[0]["response_format"] is None
     assert llm.calls[0]["system_prompt"] is not None
     assert "牧野神奈" in llm.calls[0]["system_prompt"]
     assert "不要自称 AI、助手、模型或自动程序" in llm.calls[0]["system_prompt"]

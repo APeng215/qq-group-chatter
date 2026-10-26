@@ -109,7 +109,7 @@ def _looks_like_template_leak(value: str) -> bool:
 
 
 class ChatAgent:
-    def __init__(self, llm: Any | None = None, *, json_output_enabled: bool = True):
+    def __init__(self, llm: Any | None = None, *, json_output_enabled: bool = False):
         self._llm = llm
         self.json_output_enabled = json_output_enabled
 

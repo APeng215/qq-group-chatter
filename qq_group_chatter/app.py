@@ -256,7 +256,7 @@ def create_default_orchestrator(
             planner_llm=planner_llm,
             llm_trace_store=llm_trace_store,
         ),
-        chat_agent=ChatAgent(llm=resolved_chat_llm, json_output_enabled=_read_bool("CHAT_JSON_OUTPUT_ENABLED", True)),
+        chat_agent=ChatAgent(llm=resolved_chat_llm, json_output_enabled=_read_bool("CHAT_JSON_OUTPUT_ENABLED", False)),
     )
 
 
@@ -287,7 +287,7 @@ def create_default_application(
         short_term_memory=create_default_short_term_memory_service(),
         long_term_memory=long_term_memory,
         conversation_archive=conversation_archive,
-        chat_agent=ChatAgent(llm=resolved_chat_llm, json_output_enabled=_read_bool("CHAT_JSON_OUTPUT_ENABLED", True)),
+        chat_agent=ChatAgent(llm=resolved_chat_llm, json_output_enabled=_read_bool("CHAT_JSON_OUTPUT_ENABLED", False)),
         web_search=web_search,
         image_service=image_service,
     )

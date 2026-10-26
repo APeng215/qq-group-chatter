@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import re
 from collections.abc import Awaitable, Callable
 from typing import Literal
 
@@ -67,10 +68,14 @@ class ImageSnapshot:
                           "timeout": "下载超时", "too_large": "文件超限",
                           "unsupported_format": "格式不支持"}.get(str(status), "下载失败")
                 labels.append(f"[图片未读取：{reason}]")
-        # Placeholder text is not an attachment identity. Preserve it verbatim.
+        # The adapter emits standalone placeholders in attachment order. Only
+        # consume as many as this message's actual attachments; preserve prose.
+        remaining = iter(labels)
+        content = re.sub(r"(?<!\S)\[图片\](?!\S)",
+                         lambda match: next(remaining, match.group(0)), content) if entries else content
         if archive and not entries:
             content = content.replace("[图片]", "[历史图片未提供]")
-        return " ".join([content, *labels]).strip()
+        return " ".join([content, *remaining]).strip()
 
 
 @dataclass(frozen=True)
