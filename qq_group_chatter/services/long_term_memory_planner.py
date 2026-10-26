@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 import json
 import re
 from typing import Any
@@ -87,6 +88,7 @@ class LongTermMemoryPlanner:
             short_term_messages=short_term_messages or [],
             conversation_archive=conversation_archive or [],
             assistant_reply=assistant_reply,
+            image_snapshot=image_snapshot,
         )
         with observe_duration(
             metric=LLM_LATENCY_SECONDS,
@@ -139,7 +141,14 @@ class LongTermMemoryPlanner:
         short_term_messages: list[ChatMessage],
         conversation_archive: list[ConversationArchiveRecord],
         assistant_reply: str | None,
+        image_snapshot: ImageSnapshot | None = None,
     ) -> str:
+        snapshot = image_snapshot or ImageSnapshot()
+        user_message = snapshot.render_content(user_message, context.message_id)
+        short_term_messages = [replace(m, content=snapshot.render_content(m.content, m.message_id))
+                               for m in short_term_messages]
+        conversation_archive = [replace(r, content=snapshot.render_content(r.content, r.message_id, archive=True))
+                                for r in (conversation_archive or [])]
         history_messages = _history_without_current_message(short_term_messages, context)
         known_users = _collect_known_users(context, history_messages, conversation_archive)
         return PLANNER_PROMPT_TEMPLATE.format(

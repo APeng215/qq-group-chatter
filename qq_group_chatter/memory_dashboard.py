@@ -723,7 +723,7 @@ def memory_dashboard_html(snapshot: dict[str, Any]) -> str:
       if (!context) return '<div class="empty">本次未记录图片输入</div>';
       const labels = {{sent: "已发送", sent_duplicate: "已发送（共用图片）", disabled: "功能关闭", request_limit: "请求上限省略", message_limit: "接收上限省略", missing_url: "缺少 URL", unavailable: "图片已不可用", timeout: "下载超时", too_large: "文件超限", unsupported_format: "不支持的格式", download_failed: "下载失败", http_error: "下载失败", private_address: "地址不允许", invalid_url: "无效地址"}};
       return `<div class="muted">实际发送 ${{context.sent_count || 0}} / ${{context.max_images}} 张 · ${{context.enabled ? "开启" : "关闭"}}</div>` +
-        (context.attachments || []).map(image => `<div class="trace-message"><div>${{escapeHtml(labels[image.status] || image.status)}} · 来源消息 ${{escapeHtml(image.message_id || "")}} · ${{escapeHtml(image.nickname || image.user_id || "")}} · 第 ${{image.position}} 张 ${{image.input_index ? `→ 输入 ${{image.input_index}}` : ""}}</div>
+        (context.attachments || []).map(image => `<div class="trace-message"><div>${{escapeHtml(labels[image.status] || image.status)}} · 来源消息 ${{escapeHtml(image.message_id || "")}} · ${{escapeHtml(image.nickname || image.user_id || "")}} · 第 ${{image.position}} 张 ${{image.input_index ? `${{image.status === "sent_duplicate" ? "复用" : "→"}} 图${{image.input_index}}` : ""}}</div>
         <div class="muted">${{escapeHtml(image.media_type || "")}} · ${{image.size_bytes || 0}} bytes · ${{image.duration_ms || 0}} ms</div>
         ${{image.resource_id ? renderImageReference(image.resource_id) : ""}}</div>`).join("");
     }}
@@ -1032,7 +1032,7 @@ def memory_dashboard_html(snapshot: dict[str, Any]) -> str:
           ${{renderTraceReasoning(item)}}
         </details>
         <details data-detail-key="${{escapeHtml(traceKey)}}:messages">
-          <summary>上下文</summary>
+          <summary>请求上下文（图片以引用展示）</summary>
           ${{renderTraceMessages(item.messages || [])}}
         </details>
         <details data-detail-key="${{escapeHtml(traceKey)}}:images" open>

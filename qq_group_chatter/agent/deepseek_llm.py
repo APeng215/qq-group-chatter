@@ -65,16 +65,19 @@ class DeepSeekChatLLM:
         ]
         trace_messages = messages
         if image_snapshot is not None and image_snapshot.attachments:
-            text = prompt + image_snapshot.prompt_section()
+            text = prompt
             blocks: list[dict[str, Any]] = [{"type": "text", "text": text}]
             trace_blocks: list[dict[str, Any]] = [{"type": "text", "text": text}]
             if image_snapshot.enabled:
-                for image in image_snapshot.images[:image_snapshot.max_images]:
+                for index, image in enumerate(image_snapshot.images[:image_snapshot.max_images], 1):
+                    label = {"type": "text", "text": f"图{index}"}
+                    blocks.append(label)
+                    trace_blocks.append(label.copy())
                     blocks.append({"type": "image_url", "image_url": {
                         "url": f"data:{image.media_type};base64,{base64.b64encode(image.data).decode('ascii')}",
                         "detail": "auto",
                     }})
-                    trace_blocks.append({"type": "image_ref", "resource_id": image.resource_id,
+                    trace_blocks.append({"type": "image_ref", "input_index": index, "resource_id": image.resource_id,
                                          "media_type": image.media_type})
             messages = [messages[0], {"role": "user", "content": blocks}]
             trace_messages = [messages[0], {"role": "user", "content": trace_blocks}]
@@ -104,7 +107,7 @@ class DeepSeekChatLLM:
                 messages=trace_messages,
                 **({"image_context": {
                     "enabled": image_snapshot.enabled, "max_images": image_snapshot.max_images,
-                    "sent_count": len(image_snapshot.images) if image_snapshot.enabled else 0,
+                    "sent_count": min(len(image_snapshot.images), image_snapshot.max_images) if image_snapshot.enabled else 0,
                     "attachments": image_snapshot.attachments,
                 }} if image_snapshot is not None else {}),
                 current_user_message=_clean_trace_value(

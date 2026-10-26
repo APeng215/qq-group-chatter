@@ -7,6 +7,7 @@ import re
 import shutil
 import subprocess
 import uuid
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -246,12 +247,17 @@ async def test_full_chat_search_ingestion_share_snapshot_and_trace_has_no_base64
     assert len(calls) == 3
     image_blocks = [call["messages"][1]["content"][1:] for call in calls]
     assert image_blocks[0] == image_blocks[1] == image_blocks[2]
-    assert image_blocks[0][0]["image_url"]["url"].startswith("data:image/png;base64,")
+    assert image_blocks[0][0] == {"type": "text", "text": "图1"}
+    assert image_blocks[0][1]["image_url"]["url"].startswith("data:image/png;base64,")
     traces = store.snapshot()["traces"]
     assert all(t["image_context"]["sent_count"] == 1 for t in traces)
     assert "data:image" not in store.path.read_text(encoding="utf-8")
-    assert all(t["messages"][1]["content"][1]["type"] == "image_ref" for t in traces)
-    assert "历史图片仅供指代理解" in planner_client.calls[0]["messages"][1]["content"][0]["text"]
+    assert all(t["messages"][1]["content"][2]["type"] == "image_ref" for t in traces)
+    assert "历史图片仅供指代理解" in planner_client.calls[0]["messages"][0]["content"]
+    for call in calls:
+        prompt = call["messages"][1]["content"][0]["text"]
+        assert "[图1]" in prompt
+        assert "resource_id" not in prompt and "duration_ms" not in prompt
 
 
 async def test_console_preview_settings_and_unavailable_resources():
@@ -317,7 +323,7 @@ async def test_actual_llm_respects_four_image_limit_and_global_disable(enabled):
     for client in (chat_client, planner_client):
         blocks = client.calls[0]["messages"][1]["content"]
         assert sum(block["type"] == "image_url" for block in blocks) == (4 if enabled else 0)
-        assert ("request_limit" if enabled else "disabled") in blocks[0]["text"]
+        assert ("[图片未读取：超限]" if enabled else "[图片未读取：功能关闭]") in blocks[0]["text"]
 
 
 async def test_long_term_and_archive_store_only_text_not_image_references():
@@ -450,12 +456,53 @@ assert.ok(rendered.includes("/api/images?resource_id=" + resource));
 assert.ok(!renderImageReference("../secret").includes("<img"));
 const cards = renderTraceImages({image_context:{enabled:true,max_images:4,sent_count:1,attachments:[
  {status:"sent",resource_id:resource,message_id:"m1",position:1,input_index:1},
+ {status:"sent_duplicate",resource_id:resource,message_id:"m2",position:1,input_index:1},
  {status:"request_limit",message_id:"m1",position:5},
  {status:"download_failed",message_id:"m2",position:1}]}});
 assert.ok(cards.includes("实际发送 1 / 4"));
 assert.ok(cards.includes("请求上限省略"));
 assert.ok(cards.includes("下载失败"));
+assert.ok(cards.includes("复用 图1"));
 '''
     path.write_text(helpers, encoding="utf-8")
     rendered = subprocess.run([node, str(path)], capture_output=True, text=True, encoding="utf-8")
     assert rendered.returncode == 0, rendered.stderr
+
+
+async def test_message_labels_link_current_history_quote_and_archive_without_mutation():
+    from qq_group_chatter.models import ConversationArchiveRecord
+
+    service = ImageUnderstandingService(path=workdir(), downloader=download)
+    images = await prepared(service, 3)
+    ctx = context(reply_to="quoted")
+    history = [replace(message("quoted", [images[2]]), content="引用正文", user_id="456"),
+               replace(message("duplicate", [images[0]]), content="重复正文"),
+               replace(message("current", images[:2]), content="字面量[图片]")]
+    snapshot = service.snapshot(history, ctx)
+    records = [ConversationArchiveRecord("引用正文", "user", "456", "other", "quoted", 123),
+               ConversationArchiveRecord("[图片]", "user", "123", "tester", "old", 123)]
+    agent = ChatAgent()
+    prompt = agent._build_prompt(user_message="字面量[图片]", context=ctx,
+        short_term_messages=history, long_term_memory=LongTermMemoryBundle([], []),
+        conversation_archive=records, image_snapshot=snapshot)
+    assert "字面量[图片] [图1] [图2]" in prompt
+    assert "重复正文 [图1]" in prompt
+    assert prompt.count("引用正文 [图3]") == 3  # history, quote, semantic archive
+    assert "[历史图片未提供]" in prompt
+    assert "resource_id" not in prompt and "input_index" not in prompt
+    assert history[-1].content == "字面量[图片]"
+    assert records[0].content == "引用正文"
+    assert snapshot.render_content("literal [图片]", "unknown") == "literal [图片]"
+
+
+@pytest.mark.parametrize("status,reason", [
+    ("download_failed", "下载失败"), ("request_limit", "超限"),
+    ("disabled", "功能关闭"), ("unavailable", "缓存不可用"),
+    ("missing_url", "缺少下载地址"), ("timeout", "下载超时"),
+])
+def test_unread_images_have_reason_and_no_number(status, reason):
+    from qq_group_chatter.models import ImageSnapshot
+
+    snapshot = ImageSnapshot(attachments=[{"message_id": "m", "position": 1, "status": status}])
+    assert snapshot.render_content("正文", "m") == f"正文 [图片未读取：{reason}]"
+    assert snapshot.render_content("其他消息", "other") == "其他消息"

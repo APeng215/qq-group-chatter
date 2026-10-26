@@ -244,7 +244,7 @@ def test_memory_dashboard_html_orders_primary_trace_sections_first():
     user_question = html.index("<summary>用户提问</summary>")
     assistant_reply = html.index("<summary>神奈回复</summary>")
     reasoning = html.index("<summary>思考</summary>")
-    context = html.index("<summary>上下文</summary>")
+    context = html.index("<summary>请求上下文（图片以引用展示）</summary>")
     options = html.index("<summary>usage / options</summary>")
 
     assert user_question < assistant_reply < reasoning < context < options

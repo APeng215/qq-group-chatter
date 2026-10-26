@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Literal
 from typing import Any
 
@@ -129,6 +129,7 @@ class ChatAgent:
             short_term_messages=short_term_messages,
             long_term_memory=long_term_memory,
             conversation_archive=conversation_archive or [],
+            image_snapshot=image_snapshot,
             memory_warning=memory_warning,
         )
         if self._llm is None:
@@ -197,6 +198,7 @@ class ChatAgent:
             short_term_messages=short_term_messages,
             long_term_memory=long_term_memory,
             conversation_archive=conversation_archive or [],
+            image_snapshot=image_snapshot,
         )
         if self._llm is None:
             return "我搜到了一些资料，但现在还没有配置聊天模型来整理成回复。"
@@ -343,7 +345,14 @@ class ChatAgent:
         long_term_memory: LongTermMemoryBundle,
         conversation_archive: list[ConversationArchiveRecord] | None = None,
         memory_warning: ErrorNoticeContext | None = None,
+        image_snapshot: ImageSnapshot | None = None,
     ) -> str:
+        snapshot = image_snapshot or ImageSnapshot()
+        user_message = snapshot.render_content(user_message, context.message_id)
+        short_term_messages = [replace(m, content=snapshot.render_content(m.content, m.message_id))
+                               for m in short_term_messages]
+        conversation_archive = [replace(r, content=snapshot.render_content(r.content, r.message_id, archive=True))
+                                for r in (conversation_archive or [])]
         history_messages = _history_without_current_message(short_term_messages, context)
         history = _format_short_term_history(history_messages)
         prompt = CHAT_AGENT_PROMPT_TEMPLATE.format(
@@ -372,7 +381,14 @@ class ChatAgent:
         short_term_messages: list[ChatMessage],
         long_term_memory: LongTermMemoryBundle,
         conversation_archive: list[ConversationArchiveRecord] | None = None,
+        image_snapshot: ImageSnapshot | None = None,
     ) -> str:
+        snapshot = image_snapshot or ImageSnapshot()
+        user_message = snapshot.render_content(user_message, context.message_id)
+        short_term_messages = [replace(m, content=snapshot.render_content(m.content, m.message_id))
+                               for m in short_term_messages]
+        conversation_archive = [replace(r, content=snapshot.render_content(r.content, r.message_id, archive=True))
+                                for r in (conversation_archive or [])]
         history_messages = _history_without_current_message(short_term_messages, context)
         history = _format_short_term_history(history_messages)
         prompt = CHAT_SEARCH_GROUNDED_PROMPT_TEMPLATE.format(
