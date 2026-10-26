@@ -6,7 +6,7 @@ from collections import defaultdict, deque
 from dataclasses import asdict
 from pathlib import Path
 
-from qq_group_chatter.models import ChatMessage
+from qq_group_chatter.models import ChatMessage, ImageAttachment
 
 
 class ShortTermMemoryService:
@@ -36,6 +36,10 @@ class ShortTermMemoryService:
         async with self._lock:
             self._histories.pop(conversation_id, None)
             self._persist_locked()
+
+    def referenced_image_ids(self) -> set[str]:
+        return {a.resource_id for messages in self._histories.values()
+                for message in messages for a in message.attachments if a.resource_id}
 
     def _load(self) -> None:
         if self._path is None or not self._path.exists():
@@ -78,6 +82,7 @@ def _loads_message(line: str) -> ChatMessage | None:
             nickname=_optional_text(data.get("nickname")),
             message_id=_optional_text(data.get("message_id")),
             timestamp=float(data["timestamp"]),
+            attachments=[ImageAttachment(**item) for item in data.get("attachments", [])],
         )
     except (KeyError, TypeError, ValueError):
         return None

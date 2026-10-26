@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from time import time
-from qq_group_chatter.models import PendingAssistantReply
+from qq_group_chatter.models import PendingAssistantReply, ImageAttachment
 from qq_group_chatter.observability import record_error
 from qq_group_chatter.orchestrator import ChatOrchestrator
 
@@ -44,7 +44,9 @@ async def _handle_message_event(bot: Bot, event: MessageEvent, orchestrator: Cha
         if context is None:
             return
         if not should_reply_to_message(event):
-            await orchestrator.record_user_message(context=context, user_message=text)
+            attachments = _image_attachments_from_event(event)
+            await orchestrator.record_user_message(context=context, user_message=text,
+                **({"attachments": attachments} if attachments else {}))
             return
         await _handle_regular_chat(bot, event, context, text, orchestrator)
 
@@ -145,6 +147,19 @@ def _reply_to_message_id_from_event(event) -> str | None:
     return None
 
 
+def _image_attachments_from_event(event) -> list[ImageAttachment]:
+    attachments = []
+    for segment in getattr(event, "message", None) or []:
+        if _segment_value(segment, "type") == "image":
+            data = _segment_value(segment, "data") or {}
+            attachments.append(ImageAttachment(
+                position=len(attachments) + 1,
+                source_url=_optional_event_text(_segment_value(data, "url")),
+                file=_optional_event_text(_segment_value(data, "file")),
+            ))
+    return attachments
+
+
 def _segment_value(segment, field: str):
     if isinstance(segment, dict):
         return segment.get(field)
@@ -213,10 +228,12 @@ async def _handle_regular_chat(
         except Exception as exc:
             record_error("web_search_notice_send", exc)
 
+    attachments = _image_attachments_from_event(event)
     reply = await orchestrator.handle_message(
         context=context,
         user_message=text,
         on_search_start=on_search_start,
+        **({"attachments": attachments} if attachments else {}),
     )
     if reply:
         await _send_reply_and_record(bot, event, reply, orchestrator)

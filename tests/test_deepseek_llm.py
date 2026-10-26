@@ -1,4 +1,5 @@
 import uuid
+from types import SimpleNamespace
 from pathlib import Path
 
 import pytest
@@ -9,12 +10,54 @@ from qq_group_chatter.agent.deepseek_llm import (
     create_deepseek_chat_llm,
 )
 from qq_group_chatter.llm_tracing import LLMTraceStore
+from qq_group_chatter.agent.chat_agent import ChatAgent
+from qq_group_chatter.models import LongTermMemoryBundle, build_group_conversation_context
 
 
 def trace_dir(name):
     path = Path("tests/.tmp/deepseek-tracing") / f"{name}-{uuid.uuid4().hex}"
     path.mkdir(parents=True, exist_ok=True)
     return path
+
+
+@pytest.mark.parametrize("content", [None, "", "not valid JSON"])
+async def test_fallback_preserves_full_api_response_after_trace_reload(content):
+    payload = {
+        "id": "test-response",
+        "choices": [{
+            "finish_reason": "length",
+            "message": {"content": content, "reasoning_content": "unfinished reasoning"},
+        }],
+    }
+
+    class Response:
+        choices = [SimpleNamespace(message=SimpleNamespace(**payload["choices"][0]["message"]))]
+
+        def model_dump(self, *, mode):
+            assert mode == "json"
+            return payload
+
+    class Client(FakeAsyncClient):
+        async def create(self, **kwargs):
+            return Response()
+
+    store = LLMTraceStore(path=trace_dir("fallback") / "traces.jsonl")
+    agent = ChatAgent(llm=DeepSeekChatLLM(api_key="secret", client=Client(), trace_store=store))
+    reply = await agent.generate_reply(
+        user_message="hello",
+        context=build_group_conversation_context(
+            group_id=888888, user_id=123456, message_id="m1", nickname="tester", timestamp=123.0,
+        ),
+        short_term_messages=[],
+        long_term_memory=LongTermMemoryBundle(user_memories=[], conversation_memories=[]),
+    )
+
+    trace = LLMTraceStore(path=store.path).snapshot()["traces"][0]
+    assert reply.content == "我刚刚没能整理好回复，稍后再试。"
+    assert trace["fallback_reason"] == "invalid_chat_decision"
+    assert trace["response_text"] == (content or "")
+    assert trace["raw_response"] == payload
+    assert trace["reasoning_content"] == "unfinished reasoning"
 
 
 class FakeAsyncClient:

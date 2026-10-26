@@ -14,6 +14,7 @@ from qq_group_chatter.services.conversation_archive import ConversationArchiveSe
 from qq_group_chatter.services.long_term_memory import LongTermMemoryService
 from qq_group_chatter.services.long_term_memory_planner import LongTermMemoryPlanner
 from qq_group_chatter.services.short_term_memory import ShortTermMemoryService
+from qq_group_chatter.services.image_understanding import ImageUnderstandingService
 from qq_group_chatter.services.web_search import WebSearchService, create_default_web_search_service
 
 
@@ -54,16 +55,23 @@ class ChatBotApplication:
     conversation_archive: ConversationArchiveService | None = None
     web_search: WebSearchService | None = None
     llm_trace_store: LLMTraceStore | None = None
+    image_service: ImageUnderstandingService | None = None
 
     async def start(self) -> None:
         await self.long_term_memory.start()
         if self.conversation_archive is not None:
             await self.conversation_archive.start()
+        if self.image_service is not None:
+            await self.image_service.start(self.orchestrator.referenced_image_ids)
 
     async def stop(self) -> None:
-        if self.conversation_archive is not None:
-            await self.conversation_archive.stop()
-        await self.long_term_memory.stop()
+        try:
+            if self.conversation_archive is not None:
+                await self.conversation_archive.stop()
+            await self.long_term_memory.stop()
+        finally:
+            if self.image_service is not None:
+                await self.image_service.stop()
 
 
 def create_default_mem0_client(
@@ -274,12 +282,14 @@ def create_default_application(
     conversation_archive = create_default_conversation_archive_service(
         mem0_client=conversation_archive_mem0_client or mem0_client
     )
+    image_service = create_default_image_service()
     orchestrator = ChatOrchestrator(
         short_term_memory=create_default_short_term_memory_service(),
         long_term_memory=long_term_memory,
         conversation_archive=conversation_archive,
         chat_agent=ChatAgent(llm=resolved_chat_llm),
         web_search=web_search,
+        image_service=image_service,
     )
     return ChatBotApplication(
         orchestrator=orchestrator,
@@ -287,6 +297,19 @@ def create_default_application(
         conversation_archive=conversation_archive,
         web_search=web_search,
         llm_trace_store=llm_trace_store,
+        image_service=image_service,
+    )
+
+
+def create_default_image_service() -> ImageUnderstandingService:
+    return ImageUnderstandingService(
+        path=Path(os.getenv("MEM0_DIR") or _read_dotenv_key("MEM0_DIR") or ".mem0") / "images",
+        enabled=_read_bool("IMAGE_UNDERSTANDING_ENABLED", True),
+        max_images=_read_int("IMAGE_UNDERSTANDING_MAX_IMAGES_PER_REQUEST", 4),
+        max_per_message=_read_int("IMAGE_UNDERSTANDING_MAX_IMAGES_PER_MESSAGE", 8),
+        max_bytes=_read_int("IMAGE_UNDERSTANDING_MAX_BYTES_PER_IMAGE", 8 * 1024 * 1024),
+        timeout=_read_float("IMAGE_UNDERSTANDING_TIMEOUT_SECONDS", 8),
+        concurrency=_read_int("IMAGE_UNDERSTANDING_DOWNLOAD_CONCURRENCY", 3),
     )
 
 

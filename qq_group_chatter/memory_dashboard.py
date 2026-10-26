@@ -53,6 +53,12 @@ def setup_memory_dashboard(driver: Any, application: Any) -> None:
             handle_func=lambda request: clear_llm_traces_api(application),
         )
     )
+    driver.setup_http_server(
+        HTTPServerSetup(
+            path=URL("/api/images"), method="GET", name="qq_group_chatter_image_preview",
+            handle_func=lambda request: image_preview_api(application, request.url.query.get("resource_id", "")),
+        )
+    )
 
 
 def _read_bool(env_name: str, default: bool) -> bool:
@@ -108,6 +114,18 @@ async def clear_llm_traces_api(application: Any) -> Any:
     )
 
 
+async def image_preview_api(application: Any, resource_id: str) -> Any:
+    from nonebot.drivers import Response
+
+    service = getattr(application, "image_service", None)
+    resource = await asyncio.to_thread(service.read_resource, resource_id) if service else None
+    headers = {"cache-control": "no-store", "x-content-type-options": "nosniff"}
+    if resource is None:
+        return Response(404, headers=headers, content="图片已不可用")
+    data, media_type = resource
+    return Response(200, headers={**headers, "content-type": media_type}, content=data)
+
+
 def build_llm_traces_snapshot(application: Any) -> dict[str, Any]:
     trace_store = getattr(application, "llm_trace_store", None)
     if trace_store is None:
@@ -124,7 +142,12 @@ def build_llm_traces_snapshot(application: Any) -> dict[str, Any]:
             "errors": ["LLM trace store is not available."],
         }
     try:
-        return trace_store.snapshot()
+        snapshot = trace_store.snapshot()
+        image_service = getattr(application, "image_service", None)
+        snapshot["image_understanding"] = image_service.settings() if image_service else {
+            "enabled": False, "max_images_per_request": 4,
+        }
+        return snapshot
     except Exception as exc:
         return {
             "generated_at": datetime.now(tz=UTC).isoformat().replace("+00:00", "Z"),
@@ -675,16 +698,42 @@ def memory_dashboard_html(snapshot: dict[str, Any]) -> str:
         return `<div class="trace-message">
           <div class="trace-message-role">${{escapeHtml(role || `message ${{index + 1}}`)}}</div>
           <div class="trace-message-body">
-            <pre class="trace-message-content">${{formatTraceText(content ?? "")}}</pre>
+            ${{renderTraceContent(content)}}
           </div>
         </div>`;
       }}).join("");
     }}
 
+    function renderImageReference(resourceId) {{
+      if (!/^[a-f0-9]{{64}}$/.test(String(resourceId || ""))) return '<span class="empty">图片已不可用</span>';
+      const url = `/api/images?resource_id=${{encodeURIComponent(resourceId)}}`;
+      return `<a href="${{url}}" target="_blank" rel="noopener"><img class="trace-image" loading="lazy" src="${{url}}" alt="图片已不可用" style="max-width:240px;max-height:180px;object-fit:contain" onerror="this.hidden=true;this.parentElement.nextElementSibling.hidden=false"></a><span class="empty" hidden>图片已不可用</span>`;
+    }}
+
+    function renderTraceContent(content) {{
+      if (!Array.isArray(content)) return `<pre class="trace-message-content">${{formatTraceText(content ?? "")}}</pre>`;
+      return content.map(block => block.type === "text"
+        ? `<pre class="trace-message-content">${{formatTraceText(block.text || "")}}</pre>`
+        : block.type === "image_ref" ? renderImageReference(block.resource_id)
+        : `<pre>${{escapeHtml(JSON.stringify(block, null, 2))}}</pre>`).join("");
+    }}
+
+    function renderTraceImages(item) {{
+      const context = item.image_context;
+      if (!context) return '<div class="empty">本次未记录图片输入</div>';
+      const labels = {{sent: "已发送", sent_duplicate: "已发送（共用图片）", disabled: "功能关闭", request_limit: "请求上限省略", message_limit: "接收上限省略", missing_url: "缺少 URL", unavailable: "图片已不可用", timeout: "下载超时", too_large: "文件超限", unsupported_format: "不支持的格式", download_failed: "下载失败", http_error: "下载失败", private_address: "地址不允许", invalid_url: "无效地址"}};
+      return `<div class="muted">实际发送 ${{context.sent_count || 0}} / ${{context.max_images}} 张 · ${{context.enabled ? "开启" : "关闭"}}</div>` +
+        (context.attachments || []).map(image => `<div class="trace-message"><div>${{escapeHtml(labels[image.status] || image.status)}} · 来源消息 ${{escapeHtml(image.message_id || "")}} · ${{escapeHtml(image.nickname || image.user_id || "")}} · 第 ${{image.position}} 张 ${{image.input_index ? `→ 输入 ${{image.input_index}}` : ""}}</div>
+        <div class="muted">${{escapeHtml(image.media_type || "")}} · ${{image.size_bytes || 0}} bytes · ${{image.duration_ms || 0}} ms</div>
+        ${{image.resource_id ? renderImageReference(image.resource_id) : ""}}</div>`).join("");
+    }}
+
     function extractPlannerUserMessage(messages) {{
       if (!Array.isArray(messages)) return "";
       const userMessage = messages.find(message => message && message.role === "user");
-      const content = String(userMessage?.content || "");
+      const content = Array.isArray(userMessage?.content)
+        ? userMessage.content.filter(block => block.type === "text").map(block => block.text).join("\\n")
+        : String(userMessage?.content || "");
       const match = content.match(/用户消息：\\s*\\n([^\\n]+)/);
       return match ? match[1].trim() : "";
     }}
@@ -711,6 +760,11 @@ def memory_dashboard_html(snapshot: dict[str, Any]) -> str:
         blocks.push('<div class="empty">没有神奈回复</div>');
       }}
       blocks.push(`<div class="muted">原始 response</div><pre class="trace-json-block">${{formatTraceText(item.response_text || "")}}</pre>`);
+      if (item.raw_response) {{
+        blocks.push(`<div class="muted">完整 API response</div><pre class="trace-json-block">${{escapeHtml(JSON.stringify(item.raw_response, null, 2))}}</pre>`);
+      }} else if (!String(item.response_text || "").trim()) {{
+        blocks.push('<div class="empty">未记录完整响应，无法判断原始 content 是否为空。</div>');
+      }}
       return blocks.join("");
     }}
 
@@ -723,20 +777,6 @@ def memory_dashboard_html(snapshot: dict[str, Any]) -> str:
         return '<div class="empty">没有 thinking 内容</div>';
       }}
       return `<pre class="trace-reasoning-content">${{formatTraceText(item.reasoning_content || "")}}</pre>`;
-    }}
-
-    function renderTraceResult(item) {{
-      const result = {{
-        parsed_action: item.parsed_action || null,
-        final_reply: item.final_reply || null,
-        fallback_reason: item.fallback_reason || null,
-        search_notice: item.search_notice || null,
-        search_query: item.search_query || null,
-      }};
-      if (!Object.values(result).some(value => value !== null && String(value).trim())) {{
-        return '<div class="empty">没有解析后的最终输出</div>';
-      }}
-      return `<pre class="trace-json-block">${{escapeHtml(JSON.stringify(result, null, 2))}}</pre>`;
     }}
 
     function renderSummary() {{
@@ -830,7 +870,8 @@ def memory_dashboard_html(snapshot: dict[str, Any]) -> str:
         `<div><span class="muted">当前匹配</span><strong>${{traces.length}}</strong></div>` +
         `<div><span class="muted">thinking 内容</span><strong>${{traces.filter(traceHasReasoningContent).length}}</strong></div>` +
         `<div><span class="muted">匹配平均耗时</span><strong>${{escapeHtml(formatDurationMs(visibleAverage))}}</strong></div>` +
-        `<div><span class="muted">聊天平均耗时</span><strong>${{escapeHtml(formatDurationMs(s.average_duration_ms || 0))}}</strong></div>`;
+        `<div><span class="muted">聊天平均耗时</span><strong>${{escapeHtml(formatDurationMs(s.average_duration_ms || 0))}}</strong></div>` +
+        `<div><span class="muted">图片识别</span><strong>${{traceSnapshot.image_understanding?.enabled ? "开启" : "关闭"}} · 最多 ${{traceSnapshot.image_understanding?.max_images_per_request ?? 4}} 张</strong></div>`;
     }}
 
     function renderTraceErrors() {{
@@ -994,9 +1035,9 @@ def memory_dashboard_html(snapshot: dict[str, Any]) -> str:
           <summary>上下文</summary>
           ${{renderTraceMessages(item.messages || [])}}
         </details>
-        <details data-detail-key="${{escapeHtml(traceKey)}}:result">
-          <summary>最终输出 / 解析结果</summary>
-          ${{renderTraceResult(item)}}
+        <details data-detail-key="${{escapeHtml(traceKey)}}:images" open>
+          <summary>图片输入</summary>
+          ${{renderTraceImages(item)}}
         </details>
         <details data-detail-key="${{escapeHtml(traceKey)}}:options">
           <summary>usage / options</summary>

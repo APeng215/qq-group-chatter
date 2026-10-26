@@ -7,6 +7,8 @@ from typing import Any, Protocol
 from qq_group_chatter.agent.chat_agent import ChatDecision, ChatReplyDecision, WebSearchDecision
 from qq_group_chatter.models import (
     ChatMessage,
+    ImageAttachment,
+    ImageSnapshot,
     ConversationArchiveRecord,
     ConversationContext,
     ErrorNoticeContext,
@@ -27,6 +29,8 @@ class ShortTermMemory(Protocol):
     async def add_message(self, message: ChatMessage) -> None: ...
 
     async def get_recent(self, conversation_id: str, limit: int = 20) -> list[ChatMessage]: ...
+
+    def referenced_image_ids(self) -> set[str]: ...
 
 
 class LongTermMemory(Protocol):
@@ -55,6 +59,7 @@ class ReplyAgent(Protocol):
         long_term_memory,
         conversation_archive: list[ConversationArchiveRecord] | None = None,
         memory_warning: ErrorNoticeContext | None = None,
+        image_snapshot: ImageSnapshot | None = None,
     ) -> ChatDecision: ...
 
     async def generate_grounded_search_reply(
@@ -67,6 +72,7 @@ class ReplyAgent(Protocol):
         short_term_messages: list[ChatMessage],
         long_term_memory,
         conversation_archive: list[ConversationArchiveRecord] | None = None,
+        image_snapshot: ImageSnapshot | None = None,
     ) -> str: ...
 
     async def generate_error_notice(
@@ -91,6 +97,7 @@ class ChatOrchestrator:
         conversation_archive: ConversationArchive | None = None,
         web_search: WebSearch | None = None,
         short_term_limit: int = 30,
+        image_service=None,
     ):
         self._short_term_memory = short_term_memory
         self._long_term_memory = long_term_memory
@@ -98,6 +105,10 @@ class ChatOrchestrator:
         self._chat_agent = chat_agent
         self._web_search = web_search
         self._short_term_limit = short_term_limit
+        self._image_service = image_service
+
+    def referenced_image_ids(self) -> set[str]:
+        return self._short_term_memory.referenced_image_ids()
 
     async def handle_message(
         self,
@@ -105,6 +116,7 @@ class ChatOrchestrator:
         context: ConversationContext,
         user_message: str,
         on_search_start: Callable[[str], Awaitable[None] | None] | None = None,
+        attachments: list[ImageAttachment] | None = None,
     ) -> PendingAssistantReply | None:
         content = user_message.strip()
         if not content:
@@ -120,11 +132,14 @@ class ChatOrchestrator:
             log_fields=conversation_log_fields(context),
         ):
             try:
-                await self.record_user_message(context=context, user_message=content)
+                await self.record_user_message(context=context, user_message=content, attachments=attachments)
                 short_term_messages = await self._short_term_memory.get_recent(
                     context.conversation_id,
                     limit=self._short_term_limit,
                 )
+                image_snapshot = (self._image_service.snapshot(short_term_messages, context)
+                                  if self._image_service is not None else None)
+                image_kwargs = ({"image_snapshot": image_snapshot} if image_snapshot is not None else {})
                 memory_warning = None
                 try:
                     long_term_memory = await self._long_term_memory.search(content, context)
@@ -150,6 +165,7 @@ class ChatOrchestrator:
                     long_term_memory=long_term_memory,
                     conversation_archive=conversation_archive,
                     memory_warning=memory_warning,
+                    **image_kwargs,
                 )
                 reply = await self._resolve_decision(
                     decision,
@@ -159,6 +175,7 @@ class ChatOrchestrator:
                     long_term_memory=long_term_memory,
                     conversation_archive=conversation_archive,
                     on_search_start=on_search_start,
+                    image_snapshot=image_snapshot,
                 )
                 return PendingAssistantReply(
                     context=context,
@@ -169,6 +186,7 @@ class ChatOrchestrator:
                     conversation_archive=conversation_archive,
                     long_term_memory=long_term_memory,
                     memory_warning=memory_warning,
+                    image_snapshot=image_snapshot,
                 )
             except Exception as exc:
                 MESSAGES_TOTAL.labels(
@@ -183,10 +201,13 @@ class ChatOrchestrator:
         *,
         context: ConversationContext,
         user_message: str,
+        attachments: list[ImageAttachment] | None = None,
     ) -> None:
         content = user_message.strip()
         if not content:
             return
+        prepared = (await self._image_service.prepare(attachments or [])
+                    if self._image_service is not None else [])
         message = ChatMessage(
             conversation_id=context.conversation_id,
             role="user",
@@ -195,6 +216,7 @@ class ChatOrchestrator:
             nickname=context.nickname,
             message_id=context.message_id,
             timestamp=context.timestamp,
+            attachments=prepared,
         )
         await self._short_term_memory.add_message(message)
         await self._archive_message(message)
@@ -209,6 +231,7 @@ class ChatOrchestrator:
         long_term_memory,
         conversation_archive: list[ConversationArchiveRecord],
         on_search_start: Callable[[str], Awaitable[None] | None] | None,
+        image_snapshot: ImageSnapshot | None = None,
     ) -> str:
         if isinstance(decision, ChatReplyDecision):
             return decision.content
@@ -236,6 +259,7 @@ class ChatOrchestrator:
                 short_term_messages=short_term_messages,
                 long_term_memory=long_term_memory,
                 conversation_archive=conversation_archive,
+                **({"image_snapshot": image_snapshot} if image_snapshot is not None else {}),
             )
         except Exception as exc:
             record_error("web_search", exc)
@@ -275,6 +299,7 @@ class ChatOrchestrator:
                     conversation_archive=reply.conversation_archive,
                     existing_memories=reply.long_term_memory,
                     assistant_reply=reply.content,
+                    image_snapshot=reply.image_snapshot,
                     on_error_notice=(
                         None
                         if on_memory_error_notice is None

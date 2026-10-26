@@ -65,6 +65,9 @@ class ConversationArchiveService:
     async def enqueue_message(self, message: ChatMessage) -> None:
         if not self._enabled:
             return
+        # Archive only raw text/placeholders, never image references.
+        if message.attachments:
+            message = replace(message, attachments=[])
         if self._worker is None:
             await self._write_message(message)
             return

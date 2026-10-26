@@ -245,9 +245,9 @@ def test_memory_dashboard_html_orders_primary_trace_sections_first():
     assistant_reply = html.index("<summary>神奈回复</summary>")
     reasoning = html.index("<summary>思考</summary>")
     context = html.index("<summary>上下文</summary>")
-    result = html.index("<summary>最终输出 / 解析结果</summary>")
+    options = html.index("<summary>usage / options</summary>")
 
-    assert user_question < assistant_reply < reasoning < context < result
+    assert user_question < assistant_reply < reasoning < context < options
 
 
 def test_memory_dashboard_html_labels_average_duration_as_chat_only():
@@ -332,13 +332,14 @@ def test_memory_dashboard_html_confirms_before_clearing_traces():
     assert "确定清空当前所有 LLM trace" in html
 
 
-def test_memory_dashboard_html_renders_final_trace_result():
+def test_memory_dashboard_html_shows_raw_response_without_final_result_section():
     html = memory_dashboard_html({"summary": {"total": 0}, "memories": [], "errors": []})
 
-    assert "function renderTraceResult" in html
-    assert "最终输出 / 解析结果" in html
+    assert "function renderTraceResult" not in html
+    assert "最终输出 / 解析结果" not in html
     assert "final_reply" in html
-    assert "fallback_reason" in html
+    assert "完整 API response" in html
+    assert "JSON.stringify(item.raw_response, null, 2)" in html
 
 
 async def test_llm_trace_dashboard_api_returns_snapshot_and_clear_response():

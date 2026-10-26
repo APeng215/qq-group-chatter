@@ -6,6 +6,7 @@ from typing import Any
 
 from qq_group_chatter.models import (
     ChatMessage,
+    ImageSnapshot,
     ConversationArchiveRecord,
     ConversationContext,
     LongTermMemoryOperation,
@@ -71,6 +72,7 @@ class LongTermMemoryPlanner:
         short_term_messages: list[ChatMessage] | None = None,
         conversation_archive: list[ConversationArchiveRecord] | None = None,
         assistant_reply: str | None = None,
+        image_snapshot: ImageSnapshot | None = None,
     ) -> LongTermMemoryPlanResult:
         if self._llm is None:
             return LongTermMemoryPlanResult(operations=[])
@@ -97,6 +99,8 @@ class LongTermMemoryPlanner:
                     prompt,
                     response_format={"type": "json_object"},
                     system_prompt=PLANNER_SYSTEM_PROMPT,
+                    **({"image_snapshot": image_snapshot} if image_snapshot is not None
+                       and (image_snapshot.images or image_snapshot.attachments) else {}),
                     trace_context={
                         "component": "memory_planner",
                         "operation": "plan_memory",
@@ -106,6 +110,8 @@ class LongTermMemoryPlanner:
                     },
                 )
             except TypeError:
+                if image_snapshot is not None and image_snapshot.images:
+                    raise
                 raw = await self._llm.ainvoke(_combined_prompt(prompt))
         return self._parse_plan_result(
             raw,

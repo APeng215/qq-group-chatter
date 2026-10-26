@@ -169,6 +169,7 @@ class LongTermMemoryService:
             except Exception as exc:
                 record_error("long_term_memory_worker", exc)
             finally:
+                job = None  # Release the last image snapshot while waiting for the next job.
                 self._queue.task_done()
                 MEMORY_INGESTION_QUEUE_SIZE.set(self._queue.qsize())
 
@@ -209,6 +210,7 @@ class LongTermMemoryService:
                 short_term_messages=job.short_term_messages,
                 conversation_archive=job.conversation_archive,
                 assistant_reply=job.assistant_reply,
+                **({"image_snapshot": job.image_snapshot} if job.image_snapshot is not None else {}),
             )
         except Exception as exc:
             record_error("long_term_memory_planner", exc)
@@ -258,7 +260,13 @@ class LongTermMemoryService:
         job: LongTermMemoryIngestionJob,
         existing_memories: LongTermMemoryBundle,
     ) -> LongTermMemoryRecord | ErrorNoticeContext | None:
-        if not self._is_valid_operation(operation):
+        image_ids = (str(item["resource_id"]) for item in job.image_snapshot.attachments
+                     if item.get("resource_id")) if job.image_snapshot else ()
+        contains_image_reference = any(image_id in operation.content for image_id in image_ids) or any(
+            marker in operation.content.lower()
+            for marker in ("data:image/", "base64://", ".mem0/images/", ".mem0\\images\\", "/api/images?resource_id=")
+        )
+        if not self._is_valid_operation(operation) or contains_image_reference:
             MEMORY_CANDIDATES_TOTAL.labels(
                 scope=operation.scope,
                 kind=operation.kind,

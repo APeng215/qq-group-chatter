@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import base64
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -8,6 +9,7 @@ from typing import Any, Literal
 
 from qq_group_chatter.agent.identity import BOT_IDENTITY_PROMPT
 from qq_group_chatter.prompt_loader import load_prompt
+from qq_group_chatter.models import ImageSnapshot
 
 
 ThinkingMode = Literal["enabled", "disabled"]
@@ -46,6 +48,7 @@ class DeepSeekChatLLM:
         response_format: dict[str, Any] | None = None,
         system_prompt: str | None = None,
         trace_context: dict[str, str] | None = None,
+        image_snapshot: ImageSnapshot | None = None,
     ) -> str:
         resolved_response_format = (
             response_format if response_format is not None else self.response_format
@@ -60,6 +63,21 @@ class DeepSeekChatLLM:
             },
             {"role": "user", "content": prompt},
         ]
+        trace_messages = messages
+        if image_snapshot is not None and image_snapshot.attachments:
+            text = prompt + image_snapshot.prompt_section()
+            blocks: list[dict[str, Any]] = [{"type": "text", "text": text}]
+            trace_blocks: list[dict[str, Any]] = [{"type": "text", "text": text}]
+            if image_snapshot.enabled:
+                for image in image_snapshot.images[:image_snapshot.max_images]:
+                    blocks.append({"type": "image_url", "image_url": {
+                        "url": f"data:{image.media_type};base64,{base64.b64encode(image.data).decode('ascii')}",
+                        "detail": "auto",
+                    }})
+                    trace_blocks.append({"type": "image_ref", "resource_id": image.resource_id,
+                                         "media_type": image.media_type})
+            messages = [messages[0], {"role": "user", "content": blocks}]
+            trace_messages = [messages[0], {"role": "user", "content": trace_blocks}]
         params = {
             "model": self.model,
             "messages": messages,
@@ -83,7 +101,12 @@ class DeepSeekChatLLM:
                 thinking=self.thinking,
                 temperature=self.temperature,
                 response_format=resolved_response_format,
-                messages=messages,
+                messages=trace_messages,
+                **({"image_context": {
+                    "enabled": image_snapshot.enabled, "max_images": image_snapshot.max_images,
+                    "sent_count": len(image_snapshot.images) if image_snapshot.enabled else 0,
+                    "attachments": image_snapshot.attachments,
+                }} if image_snapshot is not None else {}),
                 current_user_message=_clean_trace_value(
                     context.get("current_user_message")
                 ),
@@ -107,6 +130,7 @@ class DeepSeekChatLLM:
             self.trace_store.record_success(
                 trace_id=trace_id,
                 response_text=content,
+                raw_response=_raw_response(response),
                 reasoning_content=reasoning_content,
                 usage=_response_usage(response),
                 duration_ms=(time.perf_counter() - start) * 1000,
@@ -168,6 +192,25 @@ def _read_dotenv_key(name: str = "DEEPSEEK_API_KEY", path: str = ".env") -> str 
         if key.strip() == name:
             return value.strip().strip('"').strip("'") or None
     return None
+
+
+def _raw_response(response: Any) -> dict[str, Any]:
+    if hasattr(response, "model_dump"):
+        return response.model_dump(mode="json")
+    # Also support lightweight clients used in tests and custom assembly.
+    return {
+        "choices": [
+            {
+                "finish_reason": getattr(choice, "finish_reason", None),
+                "message": {
+                    "content": _message_value(choice.message, "content"),
+                    "reasoning_content": _message_value(choice.message, "reasoning_content"),
+                },
+            }
+            for choice in response.choices
+        ],
+        "usage": _response_usage(response),
+    }
 
 
 def _response_usage(response: Any) -> dict[str, Any] | None:

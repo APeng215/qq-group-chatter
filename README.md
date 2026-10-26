@@ -7,6 +7,7 @@ NoneBot2 + OneBot v11 的 QQ 群聊/私聊机器人，使用 DeepSeek 生成回�
 - 支持 QQ 群聊和私聊。
 - 群聊中只响应 `@机器人` 的消息，私聊直接响应。
 - 使用短期记忆保留最近对话上下文。
+- 支持图片理解与短期上下文看图，默认开启，单次模型请求最多携带 4 张图片。
 - 使用 Mem0 保存长期记忆，包括用户偏好、约束、身份信息和会话规则。
 - 使用独立的原始对话语义归档召回更早的历史对话片段。
 - 聊天 Agent 可在需要实时资料时自动触发联网搜索。
@@ -82,6 +83,14 @@ LONG_TERM_MEMORY_TIME_DECAY_DAYS=180
 SHORT_TERM_MEMORY_MAX_MESSAGES=300
 SHORT_TERM_MEMORY_PATH=.mem0/short-term-memory.jsonl
 
+# 图片理解；修改后重启生效，false 会同时关闭聊天和 planner 的图片输入
+IMAGE_UNDERSTANDING_ENABLED=true
+IMAGE_UNDERSTANDING_MAX_IMAGES_PER_REQUEST=4
+IMAGE_UNDERSTANDING_MAX_IMAGES_PER_MESSAGE=8
+IMAGE_UNDERSTANDING_MAX_BYTES_PER_IMAGE=8388608
+IMAGE_UNDERSTANDING_TIMEOUT_SECONDS=8
+IMAGE_UNDERSTANDING_DOWNLOAD_CONCURRENCY=3
+
 # 更久以前的原始对话语义召回；和长期记忆分开存储
 CONVERSATION_ARCHIVE_ENABLED=true
 CONVERSATION_ARCHIVE_MAX_MESSAGES_PER_CONVERSATION=5000
@@ -146,6 +155,18 @@ OneBot v11 连接端需要连接到 NoneBot 的监听地址。具体连接方式
 
 普通聊天链路会读取短期记忆、长期记忆和相关历史对话片段，再生成回复。有效用户消息和发送成功后的 assistant 回复会进入原始对话语义归档；长期记忆写入走后台 worker，不会阻塞下一轮消息处理。
 
+### 图片理解
+
+NapCat 推送的图片消息会携带图片信息。机器人只使用事件中的 HTTP(S) URL 下载图片，不调用 `get_image` 或 `get_msg` 补取资源。URL 缺失或下载失败时会明确标记未读取，需要时请重新发送。
+
+图片缓存在 `.mem0/images/`，短期消息保存本地引用；重启后仍能在保留的短期上下文中继续追问。未 @ 机器人的群图片也会按现有记录规则缓存，但不会触发模型回复。超出短期记忆且无进行中请求引用的缓存会定期清理。
+
+聊天决策、搜索增强回复和后台记忆 planner 共用本轮图片快照，默认最多 4 张：先选当前消息，再选被引用消息，最后选 prompt 内最近历史图片；相同图片去重。每个模型调用分别计算图片输入 token，4 张是单次请求上限，不是整轮所有调用的合计上限。
+
+长期记忆只保存文字事实，不保存图片或图片引用。本轮图片可以结合本轮文字提供事实；历史图片和 assistant 回复只用于理解指代，不能独立产生新事实。原始对话语义归档只保留文字和图片占位。
+
+`IMAGE_UNDERSTANDING_ENABLED=false` 会停止下载新图片，并停止向所有模型发送当前或历史图片；文字聊天继续运行，已有缓存保留。修改 `.env` 后重启生效。
+
 ### 联网搜索
 
 联网搜索是普通聊天链路里的补充资料步骤。所有消息都会先进入普通聊天链路，由 ChatAgent 判断是直接回复，还是先联网搜索。
@@ -182,6 +203,7 @@ http://127.0.0.1:8080/console
 
 - 记忆库：只读查看当前 Mem0 本地存储里的长期记忆。
 - LLM 控制台：查看项目自己发给 DeepSeek 的原始 messages、返回内容、耗时、状态和错误摘要。
+- 图片输入：查看开关、单次图片上限、每次实际发送的图片、来源及失败/省略状态；支持缩略图和原图预览。图片 Base64 不写入 trace，复制和导出仅包含附件元数据及资源引用，缓存清理后显示“图片已不可用”。
 
 旧入口 `http://127.0.0.1:8080/memory` 仍保留为兼容别名。
 

@@ -47,6 +47,7 @@ class LLMTraceStore:
         response_format: dict[str, Any] | None,
         messages: list[dict[str, Any]],
         current_user_message: str | None = None,
+        image_context: dict[str, Any] | None = None,
     ) -> str:
         trace_id = uuid.uuid4().hex
         event = {
@@ -64,6 +65,8 @@ class LLMTraceStore:
         }
         if current_user_message:
             event["current_user_message"] = current_user_message
+        if image_context is not None:
+            event["image_context"] = image_context
         self._append_event(event)
         return trace_id
 
@@ -72,6 +75,7 @@ class LLMTraceStore:
         *,
         trace_id: str,
         response_text: str,
+        raw_response: dict[str, Any] | None = None,
         reasoning_content: str | None = None,
         usage: dict[str, Any] | None,
         duration_ms: float,
@@ -87,6 +91,8 @@ class LLMTraceStore:
         }
         if reasoning_content:
             event["reasoning_content"] = reasoning_content
+        if raw_response is not None:
+            event["raw_response"] = raw_response
         self._append_event(event)
 
     def record_error(

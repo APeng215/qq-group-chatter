@@ -33,7 +33,14 @@
 
 联网搜索是普通聊天链路里的补充资料步骤：`ChatAgent` 先用 DeepSeek JSON Output 返回 `reply` 或 `web_search` 决策；如果是 `web_search`，`ChatOrchestrator` 先发送模型生成的 `notice`，再调用 `WebSearchService.search_sources()` 获取 Tavily 来源，最后回到 `ChatAgent.generate_grounded_search_reply()` 用神奈口吻回答。
 
-长期记忆 planner 的事实来源仍然只看本轮用户消息；短期上下文、原始对话语义归档和 assistant 回复只允许作为指代、确认、拒绝、限定上下文，不能作为独立记忆事实来源。
+长期记忆 planner 的事实来源只看本轮用户消息（文字及实际发送的本轮图片）；短期上下文及历史图片、原始对话语义归档和 assistant 回复只允许作为指代、确认、拒绝、限定上下文，不能作为独立记忆事实来源。长期记忆只保存文字，不保存图片或图片引用。
+
+## 图片理解
+
+- 默认 `IMAGE_UNDERSTANDING_ENABLED=true`，每次模型请求最多 `IMAGE_UNDERSTANDING_MAX_IMAGES_PER_REQUEST=4` 张；聊天、搜索增强和 planner 复用本轮图片快照。
+- 关闭后不下载新图，也不向任何模型发送图片，文字聊天照常运行；修改配置后重启生效。
+- 只使用 NapCat 推送的图片事件和 URL，不通过 `get_image`、`get_msg` 回查图片或历史。
+- 图片缓存在 `.mem0/images/`，短期记忆保存附件引用；原始归档不保存图片引用。不要提交缓存或在 trace 中写入图片 Base64。
 
 ## 记忆边界
 

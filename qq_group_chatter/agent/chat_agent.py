@@ -7,6 +7,7 @@ from typing import Any
 
 from qq_group_chatter.models import (
     ChatMessage,
+    ImageSnapshot,
     ConversationArchiveRecord,
     ConversationContext,
     ErrorNoticeContext,
@@ -120,6 +121,7 @@ class ChatAgent:
         long_term_memory: LongTermMemoryBundle,
         conversation_archive: list[ConversationArchiveRecord] | None = None,
         memory_warning: ErrorNoticeContext | None = None,
+        image_snapshot: ImageSnapshot | None = None,
     ) -> ChatDecision:
         prompt = self._build_prompt(
             user_message=user_message,
@@ -144,6 +146,7 @@ class ChatAgent:
                 prompt,
                 response_format={"type": "json_object"},
                 system_prompt=CHAT_AGENT_SYSTEM_PROMPT,
+                image_snapshot=image_snapshot,
                 trace_context={
                     "component": "chat_agent",
                     "operation": "decision",
@@ -184,6 +187,7 @@ class ChatAgent:
         short_term_messages: list[ChatMessage],
         long_term_memory: LongTermMemoryBundle,
         conversation_archive: list[ConversationArchiveRecord] | None = None,
+        image_snapshot: ImageSnapshot | None = None,
     ) -> str:
         prompt = self._build_grounded_search_prompt(
             user_message=user_message,
@@ -208,6 +212,7 @@ class ChatAgent:
             raw = await self._call_llm(
                 prompt,
                 system_prompt=CHAT_SEARCH_GROUNDED_SYSTEM_PROMPT,
+                image_snapshot=image_snapshot,
                 trace_context={
                     "component": "chat_agent",
                     "operation": "grounded_search_reply",
@@ -259,7 +264,13 @@ class ChatAgent:
         response_format: dict[str, Any] | None = None,
         system_prompt: str | None = None,
         trace_context: dict[str, str] | None = None,
+        image_snapshot: ImageSnapshot | None = None,
     ) -> Any:
+        if image_snapshot is not None and (image_snapshot.images or image_snapshot.attachments):
+            invoke = getattr(self._llm, "ainvoke", None) or getattr(self._llm, "invoke", None) or self._llm
+            result = invoke(prompt, response_format=response_format, system_prompt=system_prompt,
+                            trace_context=trace_context, image_snapshot=image_snapshot)
+            return await result if hasattr(result, "__await__") else result
         if hasattr(self._llm, "ainvoke"):
             if response_format is not None:
                 try:

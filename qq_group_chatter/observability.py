@@ -76,6 +76,12 @@ ERRORS_TOTAL = Counter(
     "Errors by stage and type.",
     ["stage", "error_type"],
 )
+IMAGE_DOWNLOAD_TOTAL = Counter(
+    "qq_bot_image_download_total", "Image downloads by result.", ["result"],
+)
+IMAGE_DOWNLOAD_LATENCY_SECONDS = Histogram(
+    "qq_bot_image_download_latency_seconds", "Image download and validation latency.",
+)
 
 
 def hash_identifier(value: str | None) -> str | None:
