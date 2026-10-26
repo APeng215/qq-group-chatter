@@ -84,6 +84,8 @@ class FakeApplication:
 
 class FakeDriver:
     def __init__(self):
+        from fastapi import FastAPI
+        self.server_app = FastAPI()
         self.routes = {}
 
     def setup_http_server(self, setup):
@@ -141,207 +143,6 @@ def test_build_memory_dashboard_snapshot_lists_memories_and_history():
     assert memories["mem-conv-1"]["owner_id"] == "qq_conversation:qq_group:888888"
 
 
-def test_memory_dashboard_html_contains_bootstrap_snapshot():
-    html = memory_dashboard_html({"summary": {"total": 0}, "memories": [], "errors": []})
-
-    assert "<!doctype html>" in html
-    assert "window.__MEMORY_SNAPSHOT__" in html
-    assert "<title>运行控制台</title>" in html
-    assert "<h1>运行控制台</h1>" in html
-    assert "记忆库" in html
-
-
-async def test_memory_dashboard_handlers_return_html_and_json_responses():
-    html_response = await memory_dashboard_response(FakeApplication())
-    api_response = await memory_dashboard_api(FakeApplication())
-
-    assert html_response.status_code == 200
-    assert "text/html" in html_response.headers["content-type"]
-    assert "运行控制台" in html_response.content
-    assert "长期记忆" in html_response.content
-    assert api_response.status_code == 200
-    assert "application/json" in api_response.headers["content-type"]
-    assert "用户喜欢咖啡" in api_response.content
-
-
-def test_memory_dashboard_html_contains_llm_console_assets():
-    html = memory_dashboard_html({"summary": {"total": 0}, "memories": [], "errors": []})
-
-    assert "window.__MEMORY_SNAPSHOT__" in html
-    assert "LLM" in html
-    assert "/api/llm-traces" in html
-
-
-def test_memory_dashboard_html_preserves_trace_detail_expansion_on_refresh():
-    html = memory_dashboard_html({"summary": {"total": 0}, "memories": [], "errors": []})
-
-    assert "captureTraceDetailState" in html
-    assert "restoreTraceDetailState" in html
-    assert "data-detail-key" in html
-
-
-def test_memory_dashboard_html_renders_trace_text_newlines_readably():
-    html = memory_dashboard_html({"summary": {"total": 0}, "memories": [], "errors": []})
-
-    assert "formatTraceText" in html
-    assert 'replace(/\\\\n/g, "\\n")' in html
-    assert "原始 response" in html
-    assert 'formatTraceText(item.response_text || "")' in html
-
-
-def test_memory_dashboard_html_renders_trace_messages_by_role_and_content():
-    html = memory_dashboard_html({"summary": {"total": 0}, "memories": [], "errors": []})
-
-    assert "function renderTraceMessages(messages)" in html
-    assert "trace-message-role" in html
-    assert "trace-message-content" in html
-    assert "JSON.stringify(item.messages || [], null, 2)" not in html
-    assert "<pre>${formatTraceText(messages)}</pre>" not in html
-    assert "${renderTraceMessages(item.messages || [])}" in html
-
-
-def test_memory_dashboard_html_renders_trace_reasoning_content():
-    html = memory_dashboard_html({"summary": {"total": 0}, "memories": [], "errors": []})
-
-    assert "function traceHasReasoningContent(item)" in html
-    assert "function renderTraceReasoning(item)" in html
-    assert "trace-reasoning-content" in html
-    assert "思考" in html
-    assert "renderTraceSummary(traces)" in html
-    assert "traces.filter(traceHasReasoningContent).length" in html
-    assert "${renderTraceReasoning(item)}" in html
-    assert '<details data-detail-key="${escapeHtml(traceKey)}:reasoning">' in html
-    assert 'data-detail-key="${escapeHtml(traceKey)}:reasoning" ${traceHasReasoningContent(item) ? "open" : ""}' not in html
-
-
-def test_memory_dashboard_html_renders_trace_current_user_message():
-    html = memory_dashboard_html({"summary": {"total": 0}, "memories": [], "errors": []})
-
-    assert "function renderTraceUserQuestion(item)" in html
-    assert "function traceUserQuestion(item)" in html
-    assert "function extractPlannerUserMessage(messages)" in html
-    assert "用户提问" in html
-    assert "current_user_message" in html
-    assert 'content.match(/用户消息：\\s*\\n([^\\n]+)/)' in html
-    assert "没有用户提问" in html
-    assert '<details data-detail-key="${escapeHtml(traceKey)}:user-question" open>' in html
-
-
-def test_memory_dashboard_html_renders_trace_assistant_reply_first():
-    html = memory_dashboard_html({"summary": {"total": 0}, "memories": [], "errors": []})
-
-    assert "function renderTraceAssistantReply(item)" in html
-    assert "神奈回复" in html
-    assert "item.final_reply || item.search_notice || item.response_text" in html
-    assert "原始 response" in html
-    assert '${renderTraceAssistantReply(item)}' in html
-    assert '<details data-detail-key="${escapeHtml(traceKey)}:assistant-reply" open>' in html
-
-
-def test_memory_dashboard_html_orders_primary_trace_sections_first():
-    html = memory_dashboard_html({"summary": {"total": 0}, "memories": [], "errors": []})
-
-    user_question = html.index("<summary>用户提问</summary>")
-    assistant_reply = html.index("<summary>神奈回复</summary>")
-    reasoning = html.index("<summary>思考</summary>")
-    context = html.index("<summary>请求上下文（图片以引用展示）</summary>")
-    options = html.index("<summary>usage / options</summary>")
-
-    assert user_question < assistant_reply < reasoning < context < options
-
-
-def test_memory_dashboard_html_labels_average_duration_as_chat_only():
-    html = memory_dashboard_html({"summary": {"total": 0}, "memories": [], "errors": []})
-
-    assert "聊天平均耗时" in html
-    assert '<span class="muted">平均耗时 ms</span>' not in html
-
-
-def test_memory_dashboard_html_indents_llm_trace_text_blocks():
-    html = memory_dashboard_html({"summary": {"total": 0}, "memories": [], "errors": []})
-
-    assert ".trace-message-body" in html
-    assert "border-left: 3px solid #bfdbfe" in html
-    assert "padding-left: 12px" in html
-    assert 'class="trace-json-block"' in html
-
-
-def test_memory_dashboard_html_does_not_poll_llm_traces():
-    html = memory_dashboard_html({"summary": {"total": 0}, "memories": [], "errors": []})
-
-    assert "setInterval" not in html
-    assert "traceRefreshEl.addEventListener" in html
-
-
-def test_memory_dashboard_html_adds_trace_filter_status_and_quick_filters():
-    html = memory_dashboard_html({"summary": {"total": 0}, "memories": [], "errors": []})
-
-    assert 'id="trace-filter-status"' in html
-    assert 'id="trace-component-chips"' in html
-    assert 'id="trace-diagnostic-chips"' in html
-    assert "function renderTraceFilterStatus" in html
-    assert "function renderTraceComponentChips" in html
-    assert "function renderTraceDiagnosticChips" in html
-    assert "function traceMatchesDiagnostic" in html
-    assert "data-component-filter" in html
-    assert "data-diagnostic-filter" in html
-    assert "traceFilterStatusEl" in html
-
-
-def test_memory_dashboard_html_groups_related_chat_traces_by_user_question():
-    html = memory_dashboard_html({"summary": {"total": 0}, "memories": [], "errors": []})
-
-    assert "function traceGroupKey(item)" in html
-    assert "function groupTracesByUserQuestion(traces)" in html
-    assert "function renderTraceGroup(group)" in html
-    assert "trace-group" in html
-    assert "trace-group-head" in html
-    assert "trace-group-count" in html
-    assert "if (group.traces.length === 1) return renderTraceCard(group.traces[0]);" in html
-    assert ".map(group => renderTraceGroup(group))" in html
-
-
-def test_memory_dashboard_html_marks_trace_status_and_duration():
-    html = memory_dashboard_html({"summary": {"total": 0}, "memories": [], "errors": []})
-
-    assert "function traceStatusClass" in html
-    assert "function durationSeverityClass" in html
-    assert "function formatDurationMs" in html
-    assert 'class="badge ${traceStatusClass(item.status)}"' in html
-    assert 'class="duration-pill ${durationSeverityClass(item.duration_ms)}"' in html
-
-
-def test_memory_dashboard_html_adds_trace_copy_actions():
-    html = memory_dashboard_html({"summary": {"total": 0}, "memories": [], "errors": []})
-
-    assert "function copyTraceText" in html
-    assert "function traceCopyPayload" in html
-    assert "function exportFilteredTraces" in html
-    assert "navigator.clipboard.writeText" in html
-    assert "data-copy-trace-id" in html
-    assert "复制 ID" in html
-    assert "复制响应" in html
-    assert "导出当前筛选" in html
-    assert "traceListEl.addEventListener" in html
-
-
-def test_memory_dashboard_html_confirms_before_clearing_traces():
-    html = memory_dashboard_html({"summary": {"total": 0}, "memories": [], "errors": []})
-
-    assert "confirm(" in html
-    assert "确定清空当前所有 LLM trace" in html
-
-
-def test_memory_dashboard_html_shows_raw_response_without_final_result_section():
-    html = memory_dashboard_html({"summary": {"total": 0}, "memories": [], "errors": []})
-
-    assert "function renderTraceResult" not in html
-    assert "最终输出 / 解析结果" not in html
-    assert "final_reply" in html
-    assert "完整 API response" in html
-    assert "JSON.stringify(item.raw_response, null, 2)" in html
-
-
 async def test_llm_trace_dashboard_api_returns_snapshot_and_clear_response():
     application = FakeApplication()
     application.llm_trace_store = LLMTraceStore(path=trace_path("traces.jsonl"), max_records=10)
@@ -363,3 +164,46 @@ async def test_llm_trace_dashboard_api_returns_snapshot_and_clear_response():
     assert "hello" in response.content
     assert clear_response.status_code == 200
     assert build_llm_traces_snapshot(application)["traces"] == []
+
+
+async def test_spa_entry_does_not_query_memory_and_assets_are_local(monkeypatch):
+    import re
+    import qq_group_chatter.memory_dashboard as dashboard
+
+    monkeypatch.setattr(dashboard, "build_memory_dashboard_snapshot",
+                        lambda app: (_ for _ in ()).throw(AssertionError("entry queried Mem0")))
+    response = await memory_dashboard_response(FakeApplication())
+    assert response.status_code == 200
+    assert '<div id="root"></div>' in response.content
+    sources = re.findall(r'(?:src|href)="([^"]+)"', response.content)
+    assert sources and all(source.startswith("/console-assets/") for source in sources)
+    for source in sources:
+        assert (dashboard.CONSOLE_DIR / source.removeprefix("/console-assets/")).is_file()
+
+
+async def test_spa_missing_build_has_explicit_error(monkeypatch):
+    import qq_group_chatter.memory_dashboard as dashboard
+
+    monkeypatch.setattr(dashboard, "CONSOLE_DIR", trace_path("missing-build"))
+    response = await memory_dashboard_response(FakeApplication())
+    assert response.status_code == 503
+    assert "build_console.py" in response.content
+
+
+async def test_static_assets_and_path_traversal(monkeypatch):
+    import httpx
+    import qq_group_chatter.memory_dashboard as dashboard
+
+    root = trace_path("static")
+    root.mkdir()
+    (root / "asset.js").write_text("window.localAsset = true", encoding="utf-8")
+    (root.parent / "private.txt").write_text("private", encoding="utf-8")
+    monkeypatch.setattr(dashboard, "CONSOLE_DIR", root)
+    monkeypatch.setenv("QQ_GROUP_CHATTER_MEMORY_DASHBOARD_ENABLED", "true")
+    driver = FakeDriver()
+    setup_memory_dashboard(driver, FakeApplication())
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=driver.server_app), base_url="http://test") as client:
+        response = await client.get("/console-assets/asset.js")
+        assert response.status_code == 200 and "localAsset" in response.text
+        for path in ["/console-assets/%2e%2e/private.txt", "/console-assets/not-found.js", "/console-assets/%2e%2e%5cprivate.txt"]:
+            assert (await client.get(path)).status_code == 404

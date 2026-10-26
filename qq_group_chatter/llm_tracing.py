@@ -48,6 +48,8 @@ class LLMTraceStore:
         messages: list[dict[str, Any]],
         current_user_message: str | None = None,
         image_context: dict[str, Any] | None = None,
+        round_id: str | None = None,
+        attempt: int | None = None,
     ) -> str:
         trace_id = uuid.uuid4().hex
         event = {
@@ -67,6 +69,10 @@ class LLMTraceStore:
             event["current_user_message"] = current_user_message
         if image_context is not None:
             event["image_context"] = image_context
+        if round_id is not None:
+            event["round_id"] = round_id
+        if attempt is not None:
+            event["attempt"] = attempt
         self._append_event(event)
         return trace_id
 
@@ -123,6 +129,7 @@ class LLMTraceStore:
         fallback_reason: str | None = None,
         search_query: str | None = None,
         search_notice: str | None = None,
+        validation_error: str | None = None,
     ) -> None:
         event = {
             "event": "result",
@@ -134,6 +141,8 @@ class LLMTraceStore:
             event["final_reply"] = final_reply
         if fallback_reason is not None:
             event["fallback_reason"] = fallback_reason
+        if validation_error is not None:
+            event["validation_error"] = validation_error
         if search_query is not None:
             event["search_query"] = search_query
         if search_notice is not None:

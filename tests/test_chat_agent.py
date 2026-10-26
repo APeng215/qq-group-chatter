@@ -445,6 +445,58 @@ class ResultRecordingLLM(TraceContextLLM):
         self.results.append(kwargs)
 
 
+async def test_invalid_decisions_retry_with_same_prompt_and_snapshot_until_valid():
+    from qq_group_chatter.models import ImageSnapshot
+
+    llm = ResultRecordingLLM("")
+    agent = ChatAgent(llm=llm)
+    snapshot = ImageSnapshot()
+    responses = iter(["   ", '{"action":"reply","content":""}',
+                      '{"action":"web_search","notice":"查一下","query":"天气"}'])
+    calls = []
+
+    async def invoke(prompt, **kwargs):
+        calls.append((prompt, kwargs))
+        llm.last_trace_id = f"trace-{len(calls)}"
+        return next(responses)
+
+    agent._call_llm = invoke
+    ctx = build_group_conversation_context(group_id=888888, user_id=123456,
+        message_id="retry", nickname="tester", timestamp=123.0)
+    result = await agent.generate_reply(user_message="天气", context=ctx, short_term_messages=[],
+        long_term_memory=LongTermMemoryBundle([], []), image_snapshot=snapshot)
+    assert isinstance(result, WebSearchDecision)
+    assert len(calls) == 3 and calls[0][0] == calls[1][0] == calls[2][0]
+    assert [c[1]["trace_context"]["attempt"] for c in calls] == [1, 2, 3]
+    assert all(call[1]["image_snapshot"] is snapshot for call in calls)
+    assert [r["parsed_action"] for r in llm.results] == ["retry", "retry", "web_search"]
+    assert [r["trace_id"] for r in llm.results] == ["trace-1", "trace-2", "trace-3"]
+
+
+async def test_retry_stops_after_second_attempt_succeeds():
+    class SequenceLLM(TraceContextLLM):
+        async def ainvoke(self, prompt, **kwargs):
+            self.response = "not json" if not self.calls else '{"action":"reply","content":"好了"}'
+            return await super().ainvoke(prompt, **kwargs)
+
+    llm = SequenceLLM("")
+    ctx = build_group_conversation_context(group_id=888888, user_id=123456,
+        message_id="retry", nickname="tester", timestamp=123.0)
+    result = await ChatAgent(llm).generate_reply(user_message="你好", context=ctx,
+        short_term_messages=[], long_term_memory=LongTermMemoryBundle([], []))
+    assert result == ChatReplyDecision(content="好了")
+    assert len(llm.calls) == 2
+
+
+def test_decision_validation_errors_distinguish_failure_reasons():
+    from qq_group_chatter.agent.chat_agent import decision_validation_error
+
+    assert decision_validation_error("") == "empty_content"
+    assert decision_validation_error(" \n\t") == "whitespace_content"
+    assert decision_validation_error("not json") == "invalid_json"
+    assert decision_validation_error('{"action":"reply","content":""}') == "invalid_decision"
+
+
 async def test_chat_agent_passes_trace_context_for_decision_call():
     llm = TraceContextLLM('{"action":"reply","content":"ok"}')
     agent = ChatAgent(llm=llm)
@@ -467,6 +519,7 @@ async def test_chat_agent_passes_trace_context_for_decision_call():
     assert llm.calls[0]["trace_context"] == {
         "component": "chat_agent",
         "operation": "decision",
+        "attempt": 1,
         "current_user_message": "[QQ:123456 昵称:tester] hello",
     }
     assert llm.calls[0]["response_format"] is None
@@ -504,12 +557,16 @@ async def test_chat_agent_records_final_fallback_reply_when_decision_parse_fails
     )
 
     assert decision == ChatReplyDecision(content="我刚刚没能整理好回复，稍后再试。")
+    assert len(llm.calls) == 3
     assert llm.results == [
+        {"trace_id": "trace-1", "parsed_action": "retry", "fallback_reason": "invalid_chat_decision", "validation_error": "invalid_json"},
+        {"trace_id": "trace-1", "parsed_action": "retry", "fallback_reason": "invalid_chat_decision", "validation_error": "invalid_json"},
         {
             "trace_id": "trace-1",
             "parsed_action": "fallback",
             "final_reply": "我刚刚没能整理好回复，稍后再试。",
             "fallback_reason": "invalid_chat_decision",
+            "validation_error": "invalid_json",
         }
     ]
 

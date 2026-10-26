@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from time import time
+from dataclasses import replace
+from uuid import uuid4
 from collections.abc import Awaitable, Callable
 from typing import Any, Protocol
 
@@ -126,6 +128,7 @@ class ChatOrchestrator:
             ).inc()
             return None
 
+        context = replace(context, round_id=uuid4().hex)
         with observe_duration(
             metric=RESPONSE_LATENCY_SECONDS,
             log_name="message_handled",

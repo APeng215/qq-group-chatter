@@ -106,6 +106,7 @@ class LongTermMemoryPlanner:
                     trace_context={
                         "component": "memory_planner",
                         "operation": "plan_memory",
+                        **({"round_id": context.round_id} if context.round_id else {}),
                         "current_user_message": _format_current_user_message(
                             context, user_message
                         ),

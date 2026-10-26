@@ -245,6 +245,11 @@ async def test_full_chat_search_ingestion_share_snapshot_and_trace_has_no_base64
     assert await ingestion._process_job(memory.job) is None
     calls = [*client.calls, *planner_client.calls]
     assert len(calls) == 3
+    round_ids = {trace["round_id"] for trace in store.snapshot()["traces"]}
+    assert len(round_ids) == 1 and None not in round_ids
+    assert reply.context.round_id in round_ids
+    await orchestrator.handle_message(context=context(), user_message="另一次请求")
+    assert len({trace["round_id"] for trace in store.snapshot()["traces"]}) == 2
     assert all("response_format" not in call for call in client.calls)
     assert planner_client.calls[0]["response_format"] == {"type": "json_object"}
     image_blocks = [call["messages"][1]["content"][1:] for call in calls]
@@ -274,10 +279,6 @@ async def test_console_preview_settings_and_unavailable_resources():
     assert response.headers["content-type"] == "image/png"
     assert (await image_preview_api(app, "../secret")).status_code == 404
     assert (await image_preview_api(app, "0" * 64)).status_code == 404
-    html = memory_dashboard_html({"summary": {}, "memories": [], "errors": []})
-    for marker in ("renderTraceContent", "renderTraceImages", "图片识别", "请求上限省略", "图片已不可用"):
-        assert marker in html
-    assert "最终输出 / 解析结果" not in html
 
 
 async def test_unaddressed_group_image_is_cached_without_llm_or_napcat_calls(monkeypatch):
@@ -436,39 +437,6 @@ async def test_planner_image_reference_is_rejected_before_mem0_write():
         existing_memories=LongTermMemoryBundle([], []), image_snapshot=snapshot)) is None
 
 
-def test_console_javascript_syntax_and_multimodal_rendering():
-    node = shutil.which("node")
-    if node is None:
-        pytest.skip("node is needed to execute console JavaScript")
-    html = memory_dashboard_html({"summary": {}, "memories": [], "errors": []})
-    script = re.search(r"<script>([\s\S]*?)</script>", html).group(1)
-    root = workdir()
-    path = root / "console.js"
-    path.write_text(script, encoding="utf-8")
-    checked = subprocess.run([node, "--check", str(path)], capture_output=True, text=True, encoding="utf-8")
-    assert checked.returncode == 0, checked.stderr
-    helpers = script[script.index("function escapeHtml"):script.index("function formatDurationMs")]
-    helpers += script[script.index("function renderImageReference"):script.index("function extractPlannerUserMessage")]
-    helpers += '''
-const assert = require("node:assert/strict");
-const resource = "a".repeat(64);
-const rendered = renderTraceContent([{type:"text",text:"<unsafe>"},{type:"image_ref",resource_id:resource}]);
-assert.ok(rendered.includes("&lt;unsafe&gt;"));
-assert.ok(rendered.includes("/api/images?resource_id=" + resource));
-assert.ok(!renderImageReference("../secret").includes("<img"));
-const cards = renderTraceImages({image_context:{enabled:true,max_images:4,sent_count:1,attachments:[
- {status:"sent",resource_id:resource,message_id:"m1",position:1,input_index:1},
- {status:"sent_duplicate",resource_id:resource,message_id:"m2",position:1,input_index:1},
- {status:"request_limit",message_id:"m1",position:5},
- {status:"download_failed",message_id:"m2",position:1}]}});
-assert.ok(cards.includes("实际发送 1 / 4"));
-assert.ok(cards.includes("请求上限省略"));
-assert.ok(cards.includes("下载失败"));
-assert.ok(cards.includes("复用 图1"));
-'''
-    path.write_text(helpers, encoding="utf-8")
-    rendered = subprocess.run([node, str(path)], capture_output=True, text=True, encoding="utf-8")
-    assert rendered.returncode == 0, rendered.stderr
 
 
 async def test_message_labels_link_current_history_quote_and_archive_without_mutation():

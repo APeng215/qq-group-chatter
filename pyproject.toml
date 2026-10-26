@@ -25,4 +25,4 @@ testpaths = ["tests"]
 include = ["qq_group_chatter*"]
 
 [tool.setuptools.package-data]
-qq_group_chatter = ["prompts/*.txt"]
+qq_group_chatter = ["prompts/*.txt", "static/console/*", "static/console/assets/*"]

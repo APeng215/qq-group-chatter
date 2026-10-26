@@ -10,3 +10,8 @@ pytest-cache-files-*/
 tests/.tmp/
 .mem0/
 logs/
+frontend/node_modules/
+frontend/.npm-cache/
+frontend/test-results/
+frontend/playwright-report/
+build/

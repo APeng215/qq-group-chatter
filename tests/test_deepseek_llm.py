@@ -1,4 +1,5 @@
 import uuid
+import asyncio
 from types import SimpleNamespace
 from pathlib import Path
 
@@ -83,6 +84,40 @@ class FakeAsyncClient:
             choices = [Choice()]
 
         return Response()
+
+
+async def test_concurrent_responses_record_decision_on_their_own_trace():
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    class Client(FakeAsyncClient):
+        async def create(self, **kwargs):
+            prompt = kwargs["messages"][1]["content"]
+            if "first-user" in prompt:
+                started.set()
+                await release.wait()
+            return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(
+                content='{"action":"reply","content":"' + ("first" if "first-user" in prompt else "second") + '"}'))])
+
+    store = LLMTraceStore(path=trace_dir("concurrent") / "traces.jsonl")
+    agent = ChatAgent(DeepSeekChatLLM(api_key="test", client=Client(), trace_store=store))
+
+    async def reply(text):
+        return await agent.generate_reply(user_message=text,
+            context=build_group_conversation_context(group_id=1, user_id=2, message_id=text, nickname="test", timestamp=1),
+            short_term_messages=[], long_term_memory=LongTermMemoryBundle([], []))
+
+    first = asyncio.create_task(reply("first-user"))
+    await started.wait()
+    await reply("second-user")
+    release.set()
+    await first
+    traces = store.snapshot()["traces"]
+    assert len(traces) == 2
+    for trace in traces:
+        expected = "first" if "first-user" in trace["current_user_message"] else "second"
+        assert trace["final_reply"] == expected
+        assert trace["parsed_action"] == "reply"
 
 
 async def test_deepseek_llm_calls_v4_pro_with_thinking_enabled_by_default():

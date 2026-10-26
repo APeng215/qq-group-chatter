@@ -91,6 +91,7 @@ class ConversationContext:
     is_addressed_to_bot: bool = False
     bot_user_id: str | None = None
     bot_nickname: str | None = "神奈"
+    round_id: str | None = None
 
 
 @dataclass(frozen=True)

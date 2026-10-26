@@ -96,6 +96,18 @@ def _clean_field(value: Any) -> str | None:
     return value.strip()
 
 
+def decision_validation_error(raw: str) -> str:
+    if raw == "":
+        return "empty_content"
+    if not raw.strip():
+        return "whitespace_content"
+    try:
+        json.loads(raw)
+    except json.JSONDecodeError:
+        return "invalid_json"
+    return "invalid_decision"
+
+
 def _looks_like_template_leak(value: str) -> bool:
     if "<" in value or ">" in value:
         return True
@@ -135,35 +147,45 @@ class ChatAgent:
         )
         if self._llm is None:
             return ChatReplyDecision(content="\u6211\u73b0\u5728\u8fd8\u6ca1\u6709\u914d\u7f6e\u804a\u5929\u6a21\u578b\u3002")
-        with observe_duration(
-            metric=LLM_LATENCY_SECONDS,
-            labels={"component": "chat_agent"},
-            log_name="llm_call",
-            log_fields={
-                "component": "chat_agent",
-                **conversation_log_fields(context),
-            },
-        ):
-            raw = await self._call_llm(
-                prompt,
-                response_format={"type": "json_object"} if self.json_output_enabled else None,
-                system_prompt=CHAT_AGENT_SYSTEM_PROMPT,
-                image_snapshot=image_snapshot,
-                trace_context={
+        for attempt in range(3):
+            with observe_duration(
+                metric=LLM_LATENCY_SECONDS,
+                labels={"component": "chat_agent"},
+                log_name="llm_call",
+                log_fields={
                     "component": "chat_agent",
-                    "operation": "decision",
-                    "current_user_message": _format_current_user_message(
-                        context, user_message
-                    ),
+                    **conversation_log_fields(context),
                 },
-            )
-        decision = parse_chat_decision(self._content(raw))
+            ):
+                raw = await self._call_llm(
+                    prompt,
+                    response_format={"type": "json_object"} if self.json_output_enabled else None,
+                    system_prompt=CHAT_AGENT_SYSTEM_PROMPT,
+                    image_snapshot=image_snapshot,
+                    trace_context={
+                        "component": "chat_agent",
+                        "operation": "decision",
+                        "attempt": attempt + 1,
+                        **({"round_id": context.round_id} if context.round_id else {}),
+                        "current_user_message": _format_current_user_message(context, user_message),
+                    },
+                )
+            decision = parse_chat_decision(self._content(raw))
+            if decision is not None:
+                break
+            if attempt < 2:
+                self._record_decision_trace_result(
+                    parsed_action="retry",
+                    fallback_reason="invalid_chat_decision",
+                    validation_error=decision_validation_error(self._content(raw)),
+                )
         if decision is None:
             fallback = ChatReplyDecision(content="我刚刚没能整理好回复，稍后再试。")
             self._record_decision_trace_result(
                 parsed_action="fallback",
                 final_reply=fallback.content,
                 fallback_reason="invalid_chat_decision",
+                validation_error=decision_validation_error(self._content(raw)),
             )
             return fallback
         if isinstance(decision, ChatReplyDecision):
@@ -219,11 +241,13 @@ class ChatAgent:
                 trace_context={
                     "component": "chat_agent",
                     "operation": "grounded_search_reply",
+                    **({"round_id": context.round_id} if context.round_id else {}),
                     "current_user_message": _format_current_user_message(
                         context, user_message
                     ),
                 },
             )
+        self._record_decision_trace_result(parsed_action="reply", final_reply=self._content(raw))
         return self._content(raw)
 
     async def generate_error_notice(
@@ -256,6 +280,7 @@ class ChatAgent:
                 trace_context={
                     "component": "chat_agent",
                     "operation": "memory_error_notice",
+                    **({"round_id": context.round_id} if context.round_id else {}),
                 },
             )
         return self._content(raw).strip() or _fallback_error_notice(error_context)
@@ -266,7 +291,7 @@ class ChatAgent:
         *,
         response_format: dict[str, Any] | None = None,
         system_prompt: str | None = None,
-        trace_context: dict[str, str] | None = None,
+        trace_context: dict[str, Any] | None = None,
         image_snapshot: ImageSnapshot | None = None,
     ) -> Any:
         if image_snapshot is not None and (image_snapshot.images or image_snapshot.attachments):
@@ -422,6 +447,7 @@ class ChatAgent:
         fallback_reason: str | None = None,
         search_query: str | None = None,
         search_notice: str | None = None,
+        validation_error: str | None = None,
     ) -> None:
         trace_store = getattr(self._llm, "trace_store", None)
         trace_id = getattr(self._llm, "last_trace_id", None)
@@ -441,6 +467,8 @@ class ChatAgent:
             kwargs["search_query"] = search_query
         if search_notice is not None:
             kwargs["search_notice"] = search_notice
+        if validation_error is not None:
+            kwargs["validation_error"] = validation_error
         trace_store.record_result(**kwargs)
 
 

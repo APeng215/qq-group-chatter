@@ -47,7 +47,7 @@ class DeepSeekChatLLM:
         *,
         response_format: dict[str, Any] | None = None,
         system_prompt: str | None = None,
-        trace_context: dict[str, str] | None = None,
+        trace_context: dict[str, Any] | None = None,
         image_snapshot: ImageSnapshot | None = None,
     ) -> str:
         resolved_response_format = (
@@ -105,6 +105,8 @@ class DeepSeekChatLLM:
                 temperature=self.temperature,
                 response_format=resolved_response_format,
                 messages=trace_messages,
+                **({"round_id": context["round_id"]} if context.get("round_id") else {}),
+                **({"attempt": context["attempt"]} if context.get("attempt") else {}),
                 **({"image_context": {
                     "enabled": image_snapshot.enabled, "max_images": image_snapshot.max_images,
                     "sent_count": min(len(image_snapshot.images), image_snapshot.max_images) if image_snapshot.enabled else 0,
@@ -138,6 +140,9 @@ class DeepSeekChatLLM:
                 usage=_response_usage(response),
                 duration_ms=(time.perf_counter() - start) * 1000,
             )
+        # Restore this invocation's ID after awaiting the response. Other
+        # concurrent calls may have started while it was in flight.
+        self.last_trace_id = trace_id
         return content
 
 
