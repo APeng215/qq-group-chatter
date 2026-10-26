@@ -72,7 +72,7 @@ def public_connection(address, timeout=8, source_address=None):
 
 class ImageUnderstandingService:
     def __init__(self, *, path: str | Path = ".mem0/images", enabled: bool = True,
-                 max_images: int = 4, max_per_message: int = 8,
+                 max_images: int = 2, max_per_message: int = 8,
                  max_bytes: int = 8 * 1024 * 1024, timeout: float = 8, concurrency: int = 3,
                  downloader=None):
         self.path = Path(path)

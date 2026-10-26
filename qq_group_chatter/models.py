@@ -46,7 +46,7 @@ class VisualImage:
 @dataclass
 class ImageSnapshot:
     enabled: bool = False
-    max_images: int = 4
+    max_images: int = 2
     images: list[VisualImage] = field(default_factory=list)
     attachments: list[dict[str, object]] = field(default_factory=list)
 

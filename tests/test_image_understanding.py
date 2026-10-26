@@ -72,7 +72,7 @@ def test_default_config_and_disable(monkeypatch):
     for name in ("IMAGE_UNDERSTANDING_ENABLED", "IMAGE_UNDERSTANDING_MAX_IMAGES_PER_REQUEST"):
         monkeypatch.delenv(name, raising=False)
     service = create_default_image_service()
-    assert service.enabled and service.max_images == 4
+    assert service.enabled and service.max_images == 2
     monkeypatch.setenv("IMAGE_UNDERSTANDING_ENABLED", "false")
     assert not create_default_image_service().enabled
 
@@ -102,7 +102,7 @@ async def test_receive_image_metadata_and_persist_across_restart():
 
 
 async def test_snapshot_priority_deduplication_and_limits():
-    service = ImageUnderstandingService(path=workdir(), downloader=download)
+    service = ImageUnderstandingService(path=workdir(), downloader=download, max_images=4)
     images = await prepared(service, 8)
     messages = [message("quoted", [images[2]]), message("older", [images[3]]),
                 message("newer", [images[4], images[0]]), message("current", images[:2])]
@@ -273,7 +273,7 @@ async def test_console_preview_settings_and_unavailable_resources():
     app = SimpleNamespace(image_service=service, llm_trace_store=LLMTraceStore(workdir() / "trace.jsonl"))
     snapshot = build_llm_traces_snapshot(app)
     assert snapshot["image_understanding"]["enabled"] is True
-    assert snapshot["image_understanding"]["max_images_per_request"] == 4
+    assert snapshot["image_understanding"]["max_images_per_request"] == 2
     response = await image_preview_api(app, images[0].resource_id)
     assert response.status_code == 200
     assert response.headers["content-type"] == "image/png"
@@ -308,7 +308,7 @@ async def test_unaddressed_group_image_is_cached_without_llm_or_napcat_calls(mon
 
 
 @pytest.mark.parametrize("enabled", [True, False])
-async def test_actual_llm_respects_four_image_limit_and_global_disable(enabled):
+async def test_actual_llm_respects_two_image_limit_and_global_disable(enabled):
     root = workdir()
     service = ImageUnderstandingService(path=root, downloader=download)
     attachments = await prepared(service, 8)
@@ -325,8 +325,12 @@ async def test_actual_llm_respects_four_image_limit_and_global_disable(enabled):
     )
     for client in (chat_client, planner_client):
         blocks = client.calls[0]["messages"][1]["content"]
-        assert sum(block["type"] == "image_url" for block in blocks) == (4 if enabled else 0)
+        assert sum(block["type"] == "image_url" for block in blocks) == (2 if enabled else 0)
         assert ("[图片未读取：超限]" if enabled else "[图片未读取：功能关闭]") in blocks[0]["text"]
+        if enabled:
+            assert snapshot.render_content("", "current") == "[图1] [图2] " + " ".join(["[图片未读取：超限]"] * 6)
+            assert [block["text"] for block in blocks[1:] if block["type"] == "text"] == ["图1", "图2"]
+            assert "[图3]" not in blocks[0]["text"]
 
 
 async def test_long_term_and_archive_store_only_text_not_image_references():
@@ -442,7 +446,7 @@ async def test_planner_image_reference_is_rejected_before_mem0_write():
 async def test_message_labels_link_current_history_quote_and_archive_without_mutation():
     from qq_group_chatter.models import ConversationArchiveRecord
 
-    service = ImageUnderstandingService(path=workdir(), downloader=download)
+    service = ImageUnderstandingService(path=workdir(), downloader=download, max_images=3)
     images = await prepared(service, 3)
     ctx = context(reply_to="quoted")
     history = [replace(message("quoted", [images[2]]), content="引用正文", user_id="456"),

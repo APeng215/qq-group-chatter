@@ -256,7 +256,7 @@ def create_default_orchestrator(
             planner_llm=planner_llm,
             llm_trace_store=llm_trace_store,
         ),
-        chat_agent=ChatAgent(llm=resolved_chat_llm, json_output_enabled=_read_bool("CHAT_JSON_OUTPUT_ENABLED", False)),
+        chat_agent=ChatAgent(llm=resolved_chat_llm, json_output_enabled=_read_bool("CHAT_JSON_OUTPUT_ENABLED", True)),
     )
 
 
@@ -287,7 +287,7 @@ def create_default_application(
         short_term_memory=create_default_short_term_memory_service(),
         long_term_memory=long_term_memory,
         conversation_archive=conversation_archive,
-        chat_agent=ChatAgent(llm=resolved_chat_llm, json_output_enabled=_read_bool("CHAT_JSON_OUTPUT_ENABLED", False)),
+        chat_agent=ChatAgent(llm=resolved_chat_llm, json_output_enabled=_read_bool("CHAT_JSON_OUTPUT_ENABLED", True)),
         web_search=web_search,
         image_service=image_service,
     )
@@ -305,7 +305,7 @@ def create_default_image_service() -> ImageUnderstandingService:
     return ImageUnderstandingService(
         path=Path(os.getenv("MEM0_DIR") or _read_dotenv_key("MEM0_DIR") or ".mem0") / "images",
         enabled=_read_bool("IMAGE_UNDERSTANDING_ENABLED", True),
-        max_images=_read_int("IMAGE_UNDERSTANDING_MAX_IMAGES_PER_REQUEST", 4),
+        max_images=_read_int("IMAGE_UNDERSTANDING_MAX_IMAGES_PER_REQUEST", 2),
         max_per_message=_read_int("IMAGE_UNDERSTANDING_MAX_IMAGES_PER_MESSAGE", 8),
         max_bytes=_read_int("IMAGE_UNDERSTANDING_MAX_BYTES_PER_IMAGE", 8 * 1024 * 1024),
         timeout=_read_float("IMAGE_UNDERSTANDING_TIMEOUT_SECONDS", 8),
