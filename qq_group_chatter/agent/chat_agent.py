@@ -121,7 +121,7 @@ def _looks_like_template_leak(value: str) -> bool:
 
 
 class ChatAgent:
-    def __init__(self, llm: Any | None = None, *, json_output_enabled: bool = True):
+    def __init__(self, llm: Any | None = None, *, json_output_enabled: bool = False):
         self._llm = llm
         self.json_output_enabled = json_output_enabled
 
@@ -171,6 +171,15 @@ class ChatAgent:
                     },
                 )
             decision = parse_chat_decision(self._content(raw))
+            if decision is None:
+                text = self._content(raw).strip()
+                # Accept ordinary prose when the model ignores the JSON protocol.
+                # Keep empty output and broken decision envelopes on the retry path.
+                try:
+                    json.loads(text)
+                except json.JSONDecodeError:
+                    if text and not text.startswith(("{", "[", "```json")):
+                        decision = ChatReplyDecision(content=text)
             if decision is not None:
                 break
             if attempt < 2:

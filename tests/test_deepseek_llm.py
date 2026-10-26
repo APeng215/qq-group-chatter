@@ -21,7 +21,7 @@ def trace_dir(name):
     return path
 
 
-@pytest.mark.parametrize("content", [None, "", "not valid JSON"])
+@pytest.mark.parametrize("content", [None, "", '{"action":'])
 async def test_fallback_preserves_full_api_response_after_trace_reload(content):
     payload = {
         "id": "test-response",

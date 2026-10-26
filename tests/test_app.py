@@ -78,7 +78,7 @@ def test_chat_json_output_default_env_and_dotenv_wiring(monkeypatch):
     for factory in factories:
         built = factory(chat_llm=object(), planner_llm=object(), mem0_client=NoopMem0Client())
         orchestrator = getattr(built, "orchestrator", built)
-        assert orchestrator._chat_agent.json_output_enabled is True
+        assert orchestrator._chat_agent.json_output_enabled is False
     monkeypatch.setattr("qq_group_chatter.app._read_dotenv_key",
                         lambda key: "false" if key == "CHAT_JSON_OUTPUT_ENABLED" else None)
     for factory in factories:

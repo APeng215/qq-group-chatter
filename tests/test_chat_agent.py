@@ -476,7 +476,7 @@ async def test_invalid_decisions_retry_with_same_prompt_and_snapshot_until_valid
 async def test_retry_stops_after_second_attempt_succeeds():
     class SequenceLLM(TraceContextLLM):
         async def ainvoke(self, prompt, **kwargs):
-            self.response = "not json" if not self.calls else '{"action":"reply","content":"好了"}'
+            self.response = '{"action":' if not self.calls else '{"action":"reply","content":"好了"}'
             return await super().ainvoke(prompt, **kwargs)
 
     llm = SequenceLLM("")
@@ -522,7 +522,7 @@ async def test_chat_agent_passes_trace_context_for_decision_call():
         "attempt": 1,
         "current_user_message": "[QQ:123456 昵称:tester] hello",
     }
-    assert llm.calls[0]["response_format"] == {"type": "json_object"}
+    assert llm.calls[0]["response_format"] is None
     assert llm.calls[0]["system_prompt"] is not None
     assert "牧野神奈" in llm.calls[0]["system_prompt"]
     assert "不要自称 AI、助手、模型或自动程序" in llm.calls[0]["system_prompt"]
@@ -539,7 +539,7 @@ async def test_chat_agent_passes_trace_context_for_decision_call():
 
 
 async def test_chat_agent_records_final_fallback_reply_when_decision_parse_fails():
-    llm = ResultRecordingLLM("not json")
+    llm = ResultRecordingLLM('{"action":')
     agent = ChatAgent(llm=llm)
     context = build_group_conversation_context(
         group_id=888888,
@@ -569,6 +569,22 @@ async def test_chat_agent_records_final_fallback_reply_when_decision_parse_fails
             "validation_error": "invalid_json",
         }
     ]
+
+
+async def test_chat_agent_accepts_plain_text_without_retry():
+    text = "  我是牧野神奈。  "
+    llm = TraceContextLLM(text)
+    context = build_group_conversation_context(
+        group_id=888888, user_id=123456, message_id="plain",
+        nickname="tester", timestamp=123.0,
+    )
+    result = await ChatAgent(llm).generate_reply(
+        user_message="hello", context=context, short_term_messages=[],
+        long_term_memory=LongTermMemoryBundle([], []),
+    )
+    assert result == ChatReplyDecision(content=text.strip())
+    assert len(llm.calls) == 1
+    assert llm.calls[0]["response_format"] is None
 
 
 async def test_chat_agent_passes_trace_context_for_grounded_search_call():
