@@ -234,7 +234,7 @@ async def test_full_chat_search_ingestion_share_snapshot_and_trace_has_no_base64
     archive = Archive()
     orchestrator = ChatOrchestrator(
         short_term_memory=ShortTermMemoryService(), long_term_memory=memory,
-        chat_agent=ChatAgent(llm), web_search=Search(), image_service=service,
+        chat_agent=ChatAgent(llm, json_output_enabled=False), web_search=Search(), image_service=service,
         conversation_archive=archive,
     )
     reply = await orchestrator.handle_message(context=context(), user_message="看看报错 [图片]",
@@ -245,6 +245,8 @@ async def test_full_chat_search_ingestion_share_snapshot_and_trace_has_no_base64
     assert await ingestion._process_job(memory.job) is None
     calls = [*client.calls, *planner_client.calls]
     assert len(calls) == 3
+    assert all("response_format" not in call for call in client.calls)
+    assert planner_client.calls[0]["response_format"] == {"type": "json_object"}
     image_blocks = [call["messages"][1]["content"][1:] for call in calls]
     assert image_blocks[0] == image_blocks[1] == image_blocks[2]
     assert image_blocks[0][0] == {"type": "text", "text": "图1"}

@@ -109,8 +109,9 @@ def _looks_like_template_leak(value: str) -> bool:
 
 
 class ChatAgent:
-    def __init__(self, llm: Any | None = None):
+    def __init__(self, llm: Any | None = None, *, json_output_enabled: bool = True):
         self._llm = llm
+        self.json_output_enabled = json_output_enabled
 
     async def generate_reply(
         self,
@@ -145,7 +146,7 @@ class ChatAgent:
         ):
             raw = await self._call_llm(
                 prompt,
-                response_format={"type": "json_object"},
+                response_format={"type": "json_object"} if self.json_output_enabled else None,
                 system_prompt=CHAT_AGENT_SYSTEM_PROMPT,
                 image_snapshot=image_snapshot,
                 trace_context={

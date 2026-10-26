@@ -70,6 +70,26 @@ def test_default_orchestrator_can_disable_deepseek_thinking(monkeypatch):
     assert orchestrator._chat_agent._llm.thinking == "disabled"
 
 
+def test_chat_json_output_default_env_and_dotenv_wiring(monkeypatch):
+    monkeypatch.setenv("WEB_SEARCH_ENABLED", "false")
+    monkeypatch.delenv("CHAT_JSON_OUTPUT_ENABLED", raising=False)
+    monkeypatch.setattr("qq_group_chatter.app._read_dotenv_key", lambda *args: None)
+    factories = [create_default_orchestrator, create_default_application]
+    for factory in factories:
+        built = factory(chat_llm=object(), planner_llm=object(), mem0_client=NoopMem0Client())
+        orchestrator = getattr(built, "orchestrator", built)
+        assert orchestrator._chat_agent.json_output_enabled is True
+    monkeypatch.setattr("qq_group_chatter.app._read_dotenv_key",
+                        lambda key: "false" if key == "CHAT_JSON_OUTPUT_ENABLED" else None)
+    for factory in factories:
+        built = factory(chat_llm=object(), planner_llm=object(), mem0_client=NoopMem0Client())
+        orchestrator = getattr(built, "orchestrator", built)
+        assert orchestrator._chat_agent.json_output_enabled is False
+    monkeypatch.setenv("CHAT_JSON_OUTPUT_ENABLED", "true")
+    built = create_default_orchestrator(chat_llm=object(), planner_llm=object(), mem0_client=NoopMem0Client())
+    assert built._chat_agent.json_output_enabled is True
+
+
 def test_default_application_wires_web_search_when_tavily_key_exists(monkeypatch):
     monkeypatch.setenv("DEEPSEEK_API_KEY", "secret")
     monkeypatch.setenv("TAVILY_API_KEY", "tavily-secret")
