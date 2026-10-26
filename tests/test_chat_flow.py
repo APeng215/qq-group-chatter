@@ -400,6 +400,42 @@ async def test_record_assistant_reply_archives_bot_identity_after_send_success()
     assert assistant_message.nickname == "神奈"
 
 
+async def test_sent_assistant_reply_can_be_resolved_by_qq_quote():
+    from types import SimpleNamespace
+    from qq_group_chatter.agent.chat_agent import _format_quoted_message
+    from qq_group_chatter.plugins.chat import _send_reply_and_record
+
+    short_term = ShortTermMemoryService(max_messages_per_conversation=10)
+    archive = FakeConversationArchive(records=[])
+    orchestrator = ChatOrchestrator(
+        short_term_memory=short_term,
+        long_term_memory=FakeLongTermMemory(),
+        conversation_archive=archive,
+        chat_agent=FakeResponder(),
+    )
+    context = build_group_conversation_context(
+        group_id=888888, user_id=123456, message_id="m1",
+        nickname="alice", timestamp=123.0,
+    )
+    reply = await orchestrator.handle_message(context=context, user_message="hello")
+
+    class Bot:
+        async def send(self, event, message):
+            return {"message_id": 987654}
+
+    await _send_reply_and_record(Bot(), SimpleNamespace(), reply, orchestrator)
+    messages = await short_term.get_recent(context.conversation_id)
+    assert messages[-1].message_id == "987654"
+    assert archive.enqueued[-1].message_id == "987654"
+    quote_context = build_group_conversation_context(
+        group_id=888888, user_id=123456, message_id="m2",
+        nickname="alice", timestamp=125.0, reply_to_message_id=987654,
+    )
+    quote = _format_quoted_message(quote_context, messages)
+    assert "[神奈] " + reply.content in quote
+    assert "短期上下文中未找到" not in quote
+
+
 async def test_orchestrator_reads_thirty_short_term_messages_by_default():
     class LimitRecordingShortTermMemory(ShortTermMemoryService):
         def __init__(self):

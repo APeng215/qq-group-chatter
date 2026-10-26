@@ -197,7 +197,7 @@ async def _send_reply_and_record(
     orchestrator: ChatOrchestrator,
 ) -> None:
     try:
-        await bot.send(event, reply.content)
+        send_result = await bot.send(event, reply.content)
     except Exception as exc:
         record_error("send_reply", exc)
         raise
@@ -207,6 +207,9 @@ async def _send_reply_and_record(
     notice = await orchestrator.record_assistant_reply(
         reply,
         on_memory_error_notice=on_memory_error_notice,
+        message_id=_optional_event_text(
+            _segment_value(send_result, "message_id")
+        ),
     )
     if notice:
         try:

@@ -216,6 +216,7 @@ class FakeBot:
         if self.raises:
             raise self.raises
         self.sent.append({"event": event, "message": message})
+        return {"message_id": 987654}
 
 
 class FakeOrchestrator:
@@ -224,9 +225,11 @@ class FakeOrchestrator:
         self.recorded_user_messages = []
         self.handle_calls = []
         self.record_notice = None
+        self.recorded_message_ids = []
 
-    async def record_assistant_reply(self, reply, on_memory_error_notice=None):
+    async def record_assistant_reply(self, reply, on_memory_error_notice=None, *, message_id=None):
         self.recorded.append(reply)
+        self.recorded_message_ids.append(message_id)
         return self.record_notice
 
     async def record_user_message(self, *, context, user_message):
@@ -312,6 +315,7 @@ async def test_send_reply_records_assistant_after_send_success():
 
     assert bot.sent == [{"event": source_event, "message": "ok"}]
     assert orchestrator.recorded == [reply]
+    assert orchestrator.recorded_message_ids == ["987654"]
 
 
 async def test_send_reply_sends_memory_error_notice_after_record_success():

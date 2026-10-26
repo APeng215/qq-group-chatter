@@ -272,6 +272,8 @@ class ChatOrchestrator:
         self,
         reply: PendingAssistantReply,
         on_memory_error_notice: Callable[[str], Awaitable[None] | None] | None = None,
+        *,
+        message_id: str | int | None = None,
     ) -> str | None:
         await self._short_term_memory.add_message(
             assistant_message := ChatMessage(
@@ -280,7 +282,7 @@ class ChatOrchestrator:
                 content=reply.content,
                 user_id=reply.context.bot_user_id,
                 nickname=reply.context.bot_nickname,
-                message_id=None,
+                message_id=str(message_id) if message_id is not None else None,
                 timestamp=reply.timestamp,
             )
         )
