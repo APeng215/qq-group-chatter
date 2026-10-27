@@ -58,6 +58,24 @@ def test_should_handle_group_message_addressed_to_bot():
     assert should_handle_message(source_event, "hello") is True
 
 
+@pytest.mark.parametrize("target,expected", [(654321, True), ("654321", True), ("123456", False), ("all", False), (None, False)])
+def test_group_message_checks_middle_mention_target(target, expected):
+    source_event = event(message=[
+        {"type": "text", "data": {"text": "请问"}},
+        {"type": "at", "data": {"qq": target}},
+        {"type": "text", "data": {"text": "你怎么看？"}},
+    ])
+
+    assert should_reply_to_message(source_event) is expected
+    assert should_handle_message(source_event, _message_text_from_event(source_event)) is expected
+
+
+def test_group_message_checks_object_mention_segments():
+    source_event = event(message=[SimpleNamespace(type="at", data={"qq": "654321"})])
+
+    assert should_reply_to_message(source_event) is True
+
+
 def test_message_text_from_event_keeps_image_placeholder():
     source_event = event(
         message=[
@@ -280,6 +298,47 @@ class FakeOrchestrator:
             content="搜索最终答案",
             timestamp=125.0,
         )
+
+
+@pytest.mark.parametrize("case", ["middle", "bare", "stripped", "stripped_without_segments", "other", "all", "empty"])
+async def test_group_mentions_through_message_handler(monkeypatch, case):
+    class GroupEvent(SimpleNamespace):
+        def get_plaintext(self):
+            return "".join(segment["data"].get("text", "") for segment in getattr(self, "message", []))
+
+    monkeypatch.setattr("qq_group_chatter.plugins.chat.GroupMessageEvent", GroupEvent)
+    source_event = GroupEvent(
+        message_type="group", to_me=case.startswith("stripped"), self_id=654321,
+        group_id=888888, user_id=123456, message_id="m2", time=123.0,
+        sender=SimpleNamespace(card="alice", nickname="alice"), message=[],
+    )
+    if case in {"middle", "bare", "other", "all"}:
+        target = {"other": "111111", "all": "all"}.get(case, "654321")
+        source_event.message = [{"type": "at", "data": {"qq": target}}]
+    if case == "middle":
+        source_event.message.insert(0, {"type": "text", "data": {"text": "请问"}})
+        source_event.message.append({"type": "text", "data": {"text": "你怎么看？"}})
+    if case == "stripped":
+        source_event.message = [{"type": "text", "data": {"text": "   "}}]
+    if case == "stripped_without_segments":
+        del source_event.message
+    bot = FakeBot()
+    orchestrator = FakeOrchestrator()
+
+    await _handle_message_event(bot, source_event, orchestrator)
+
+    if case in {"other", "all", "empty"}:
+        assert orchestrator.handle_calls == []
+        assert bot.sent == []
+        return
+    assert len(orchestrator.handle_calls) == 1
+    call = orchestrator.handle_calls[0]
+    assert call["context"].is_addressed_to_bot is True
+    expected = "请问 你怎么看？" if case == "middle" else "[用户仅提及了神奈，未附文字]"
+    assert call["user_message"] == expected
+    assert orchestrator.recorded_user_messages == []
+    assert bot.sent[-1]["message"] == "搜索最终答案"
+    assert len(orchestrator.recorded) == 1
 
 
 def context():

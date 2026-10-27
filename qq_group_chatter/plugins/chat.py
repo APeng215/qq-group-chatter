@@ -73,7 +73,7 @@ def _context_from_event(event) -> ConversationContext | None:
             message_id=message_id,
             nickname=display_name,
             timestamp=timestamp,
-            is_addressed_to_bot=bool(getattr(event, "to_me", False)),
+            is_addressed_to_bot=_is_addressed_to_bot(event),
             reply_to_message_id=reply_to_message_id,
             bot_user_id=bot_user_id,
             bot_nickname="神奈",
@@ -112,7 +112,8 @@ def _sender_text(sender, field: str) -> str | None:
 def _message_text_from_event(event) -> str:
     segments = getattr(event, "message", None)
     if segments is None:
-        return str(event.get_plaintext()).strip()
+        text = str(event.get_plaintext()).strip()
+        return text or _bare_mention_text(event)
 
     parts: list[str] = []
     for segment in segments:
@@ -127,7 +128,34 @@ def _message_text_from_event(event) -> str:
 
     if parts:
         return " ".join(parts)
-    return str(event.get_plaintext()).strip()
+    text = str(event.get_plaintext()).strip()
+    return text or _bare_mention_text(event)
+
+
+def _is_addressed_to_bot(event) -> bool:
+    if bool(getattr(event, "to_me", False)):
+        return True
+    self_id = _optional_event_text(getattr(event, "self_id", None))
+    if self_id is None:
+        return False
+    # The adapter may leave a mention in the middle of the message without
+    # setting to_me; inspect every segment, but never treat @all as a bot mention.
+    for segment in getattr(event, "message", None) or []:
+        if _segment_value(segment, "type") != "at":
+            continue
+        data = _segment_value(segment, "data") or {}
+        target = _optional_event_text(_segment_value(data, "qq"))
+        if target != "all" and target == self_id:
+            return True
+    return False
+
+
+def _bare_mention_text(event) -> str:
+    # OneBot can strip the leading bot mention before our handler sees it.
+    # Preserve the action as text so the orchestrator does not drop it as empty.
+    if getattr(event, "message_type", None) == "group" and _is_addressed_to_bot(event):
+        return "[用户仅提及了神奈，未附文字]"
+    return ""
 
 
 def _reply_to_message_id_from_event(event) -> str | None:
@@ -190,7 +218,7 @@ def should_record_message(event, text: str) -> bool:
 
 def should_reply_to_message(event) -> bool:
     message_type = getattr(event, "message_type", None)
-    if message_type == "group" and not bool(getattr(event, "to_me", False)):
+    if message_type == "group" and not _is_addressed_to_bot(event):
         return False
 
     return True
