@@ -79,13 +79,14 @@ export default function Console() {
         {round.calls.length !== round.matched.length && <Button size="small" className="notice" onClick={() => setShowAll(!showAll)}>{showAll ? '仅看匹配调用' : `展开完整链路（${round.calls.length - round.matched.length} 条未匹配）`}</Button>}
         <Timeline className="call-timeline" items={calls.map(t => ({color: statusColor(business(t)) === 'default' ? 'gray' : statusColor(business(t)), children:
           <button className={`timeline-call ${call.trace_id === t.trace_id ? 'selected-call' : ''}`} onClick={() => setSelectedCall(t.trace_id)}>
-            <span>{t.component} / {t.operation} {t.attempt ? `第${t.attempt}/3次` : ''}</span><Status trace={t}/>
+            <span>{t.component} / {t.operation} {t.attempt ? `第${t.attempt}步` : ''}</span><Status trace={t}/>
             {t.validation_error && <small>{validationLabels[t.validation_error] ?? t.validation_error}</small>}
             {!round.matched.some(m => m.trace_id === t.trace_id) && <Tag>未匹配筛选</Tag>}
           </button>}))}/>
         <Space wrap className="notice"><Status trace={call}/><Typography.Text copyable>{call.trace_id}</Typography.Text></Space>
         <Tabs activeKey={tab} onChange={setTab} items={[
           {key: 'qa', label: '问答', children: <QuestionAnswer trace={call}/>},
+          {key: 'tools', label: '工具', children: <JsonPanel label="工具调用与结果" value={{events: call.tool_events ?? [], termination: call.fallback_reason}}/>},
           {key: 'reasoning', label: '思考', children: <pre className="prose">{call.reasoning_content ?? '未记录思考内容'}</pre>},
           {key: 'context', label: '请求上下文', children: <Messages trace={call}/>},
           {key: 'raw', label: '原始 response', children: <JsonPanel label="完整 API response（SDK 对象）" value={call.raw_response ?? {response_text: call.response_text}}/>},

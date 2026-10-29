@@ -121,7 +121,11 @@ def _looks_like_template_leak(value: str) -> bool:
 
 
 class ChatAgent:
-    def __init__(self, llm: Any | None = None, *, json_output_enabled: bool = False):
+    def __init__(self, llm: Any | None = None, *, json_output_enabled: bool = False, tools=None, limits=None):
+        from qq_group_chatter.agent.tools import ToolRegistry
+        from qq_group_chatter.agent.tool_loop import AgentLimits
+        self.tools = tools if tools is not None else ToolRegistry()
+        self.limits = limits or AgentLimits.from_env()
         self._llm = llm
         self.json_output_enabled = json_output_enabled
 
@@ -135,6 +139,7 @@ class ChatAgent:
         conversation_archive: list[ConversationArchiveRecord] | None = None,
         memory_warning: ErrorNoticeContext | None = None,
         image_snapshot: ImageSnapshot | None = None,
+        on_search_start=None,
     ) -> ChatDecision:
         prompt = self._build_prompt(
             user_message=user_message,
@@ -147,6 +152,11 @@ class ChatAgent:
         )
         if self._llm is None:
             return ChatReplyDecision(content="\u6211\u73b0\u5728\u8fd8\u6ca1\u6709\u914d\u7f6e\u804a\u5929\u6a21\u578b\u3002")
+        if hasattr(self._llm, "ainvoke_messages"):
+            from qq_group_chatter.agent.tool_loop import run_tools
+            return ChatReplyDecision(await run_tools(self._llm, self.tools, self.limits,
+                prompt=prompt, system_prompt=CHAT_AGENT_SYSTEM_PROMPT, context=context,
+                image_snapshot=image_snapshot, on_search_start=on_search_start))
         for attempt in range(3):
             with observe_duration(
                 metric=LLM_LATENCY_SECONDS,

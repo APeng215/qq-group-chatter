@@ -1,6 +1,6 @@
 # QQ Group Chatter
 
-NoneBot2 + OneBot v11 的 QQ 群聊/私聊机器人，使用 DeepSeek 生成回复，使用 Mem0 + 本地 Qdrant 保存长期记忆，并可通过 Tavily 做联网搜索。
+NoneBot2 + OneBot v11 的 QQ 群聊/私聊机器人，使用 DeepSeek 生成回复，使用 Mem0 + 本地 Qdrant 保存长期记忆，并可通过 DeepSeek Search / Fetch 做联网搜索。
 
 ## 功能
 
@@ -20,7 +20,7 @@ NoneBot2 + OneBot v11 的 QQ 群聊/私聊机器人，使用 DeepSeek 生成回�
 - 一个 OneBot v11 兼容的 QQ 连接端，例如 NapCat、Lagrange、go-cqhttp 等。
 - `DEEPSEEK_API_KEY`。聊天模型和 Mem0 内部 LLM 都需要它。
 - `DEEPSEEK_THINKING` 可选，默认 `true`；如需关闭 DeepSeek thinking，设为 `false`。也兼容 `enabled` / `disabled`，但示例统一使用 `true` / `false`。
-- 如果启用联网搜索，还需要 `TAVILY_API_KEY`。
+- 如果启用联网搜索，还需要 `DEEPSEEK_API_KEY`。
 
 ## 安装
 
@@ -58,7 +58,7 @@ DEEPSEEK_THINKING=true
 如果保留默认的联网搜索开启状态，还需要：
 
 ```env
-TAVILY_API_KEY=你的 Tavily Key
+DEEPSEEK_API_KEY=你的 DeepSeek Key
 ```
 
 如果暂时不用联网搜索，可以关闭：
@@ -167,29 +167,35 @@ NapCat 推送的图片消息会携带图片信息。机器人只使用事件中�
 
 `IMAGE_UNDERSTANDING_ENABLED=false` 会停止下载新图片，并停止向所有模型发送当前或历史图片；文字聊天继续运行，已有缓存保留。修改 `.env` 后重启生效。
 
-### 联网搜索
+### Agent 工具、搜索与唤醒
 
-联网搜索是普通聊天链路里的补充资料步骤。所有消息都会先进入普通聊天链路，由 ChatAgent 判断是直接回复，还是先联网搜索。
+神奈会自主决定直接回答或调用工具，读取结果后可以继续搜索、抓取网页或使用 Python/MCP 工具。普通闲聊直接回复。
+搜索使用 DeepSeek 官方 Search/Fetch API，复用 `DEEPSEEK_API_KEY`，不再需要 Tavily 密钥。
+`WEB_SEARCH_ENABLED=false` 同时禁用搜索和抓取工具。搜索正文默认每条 8000 字符，Fetch 默认 20000 字符。
 
-示例：
+群聊中“神奈在吗”“神奈，查一下”会触发；“我觉得神奈很可爱”不会触发。
+设置 `CHAT_KEYWORD_TRIGGER_ENABLED=false` 关闭关键词唤醒，@ 和私聊仍有效。配置修改后重启。
 
-```text
-搜一下 Python 3.13 有哪些变化
-搜索 DeepSeek v3.1 发布信息
-查一下 今天的 AI 新闻
-Python 3.13 有哪些变化？
+工具配置：首次部署复制 `tools.example.json` 为本地 `tools.json`，或通过 `AGENT_TOOLS_CONFIG` 指定路径。
+Python 的 `module:factory` 返回 `AgentTool` 或列表；每个工具提供名称、说明、JSON 参数 schema 和异步 execute 函数。
+例如工厂返回 `AgentTool("echo", "返回输入", {"type": "object", "properties": {"text": {"type": "string"}}, "required": ["text"]}, echo)`，其中 `async def echo(text)` 返回可 JSON 序列化结果。
+管理员安装所需依赖并在配置中启用插件；神奈不会自行安装代码。MCP 支持 stdio 和 Streamable HTTP，服务工具以 `服务名__工具名` 注册。
+HTTP Authorization 与 stdio env 的配置值必须为 `${ENV_VAR}` 引用，例如 `MCP_AUTHORIZATION` 的环境变量值可以是完整 Bearer 认证值。
+MCP URL 不允许嵌入凭据或查询参数。MCP 服务不可用时隔离该服务，普通聊天继续工作。
+
+默认执行预算可通过以下变量配置：
+
+```dotenv
+AGENT_MAX_MODEL_CALLS=8
+AGENT_MAX_TOOL_CALLS=12
+AGENT_TOOL_TIMEOUT_SECONDS=20
+AGENT_ROUND_TIMEOUT_SECONDS=120
 ```
 
-默认行为：
+本轮重复工具和参数复用结果；最后一次模型调用停止使用工具并整理已有信息。
+`/console` 按轮次显示模型步骤，工具页展示调用参数、结果、耗时和缓存标记。
+过程提示和工具消息不写入短期聊天记忆，也不作为长期记忆事实。
 
-- ChatAgent 先返回 `reply` 或 `web_search` 决策；如果是 `web_search`，机器人会先发送一条搜索提示，再调用 Tavily。
-- 使用 Tavily 搜索。
-- 最多读取 3 条结果。
-- 基于网页 `raw_content` 生成回答。
-- 默认不向 prompt 暴露 URL，最终回答通常不展示 URL。
-- 搜索上下文不会写入长期记忆。
-- 搜索提示不会写入短期记忆。
-- 搜索回复发送成功后，会作为 assistant 回复进入短期记忆。
 
 ### 运行控制台
 
@@ -340,7 +346,7 @@ WEB_SEARCH_ENABLED=false
 如果 `WEB_SEARCH_ENABLED=true`，需要填写：
 
 ```env
-TAVILY_API_KEY=...
+DEEPSEEK_API_KEY=...
 ```
 
 ### Mem0 / Qdrant 初始化失败
@@ -365,5 +371,5 @@ python -m pip install -e .
 - 长期记忆：`qq_group_chatter/services/long_term_memory.py`
 - 长期记忆 planner：`qq_group_chatter/services/long_term_memory_planner.py`
 - 原始对话语义归档：`qq_group_chatter/services/conversation_archive.py`
-- 联网搜索：`qq_group_chatter/services/web_search.py`
+- 联网搜索：`qq_group_chatter/services/deepseek_search.py`
 - Prompt 文件：`qq_group_chatter/prompts/`

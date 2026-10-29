@@ -4,6 +4,7 @@ export interface Attachment {
   size_bytes?: number; duration_ms?: number;
 }
 export interface Trace {
+  tool_events?: {tool_call_id: string; name: string; arguments: string; result: string; cached: boolean; duration_ms: number}[];
   trace_id: string; round_id?: string; attempt?: number; created_at?: string;
   component?: string; operation?: string; status?: string; parsed_action?: string;
   validation_error?: string; fallback_reason?: string; error_message?: string;

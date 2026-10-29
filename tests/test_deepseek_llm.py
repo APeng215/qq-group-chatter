@@ -54,8 +54,8 @@ async def test_fallback_preserves_full_api_response_after_trace_reload(content):
     )
 
     trace = LLMTraceStore(path=store.path).snapshot()["traces"][0]
-    assert reply.content == "我刚刚没能整理好回复，稍后再试。"
-    assert trace["fallback_reason"] == "invalid_chat_decision"
+    assert "限制" in reply.content
+    assert trace["fallback_reason"] == "model_call_limit"
     assert trace["response_text"] == (content or "")
     assert trace["raw_response"] == payload
     assert trace["reasoning_content"] == "unfinished reasoning"
@@ -97,7 +97,7 @@ async def test_concurrent_responses_record_decision_on_their_own_trace():
                 started.set()
                 await release.wait()
             return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(
-                content='{"action":"reply","content":"' + ("first" if "first-user" in prompt else "second") + '"}'))])
+                content=("first" if "first-user" in prompt else "second")))])
 
     store = LLMTraceStore(path=trace_dir("concurrent") / "traces.jsonl")
     agent = ChatAgent(DeepSeekChatLLM(api_key="test", client=Client(), trace_store=store))

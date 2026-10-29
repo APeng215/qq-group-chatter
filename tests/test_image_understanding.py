@@ -194,7 +194,13 @@ class Client:
 
     async def create(self, **kwargs):
         self.calls.append(kwargs)
-        return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content=self.reply))])
+        if self.reply.startswith('{"action":"web_search"'):
+            data = json.loads(self.reply)
+            message = SimpleNamespace(content="", tool_calls=[{"id": "search-1", "type": "function",
+                "function": {"name": "web_search", "arguments": json.dumps({"query": data["query"]})}}], reasoning_content="thinking")
+        else:
+            message = SimpleNamespace(content=self.reply)
+        return SimpleNamespace(choices=[SimpleNamespace(message=message)])
 
 
 async def test_full_chat_search_ingestion_share_snapshot_and_trace_has_no_base64():
@@ -230,11 +236,17 @@ async def test_full_chat_search_ingestion_share_snapshot_and_trace_has_no_base64
         async def search(self, *args):
             return []
 
+    from qq_group_chatter.agent.tools import ToolRegistry, AgentTool
+    registry = ToolRegistry()
+    async def search(query):
+        await Search().search_sources(query)
+        return {"results": [{"title": "result", "content": "body"}]}
+    registry.register(AgentTool("web_search", "search", {"type": "object"}, search))
     memory = Memory()
     archive = Archive()
     orchestrator = ChatOrchestrator(
         short_term_memory=ShortTermMemoryService(), long_term_memory=memory,
-        chat_agent=ChatAgent(llm, json_output_enabled=False), web_search=Search(), image_service=service,
+        chat_agent=ChatAgent(llm, tools=registry), web_search=Search(), image_service=service,
         conversation_archive=archive,
     )
     reply = await orchestrator.handle_message(context=context(), user_message="看看报错 [图片]",

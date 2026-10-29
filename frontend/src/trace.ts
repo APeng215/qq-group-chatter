@@ -4,6 +4,7 @@ export const validationLabels: Record<string, string> = {
   empty_content: '空字符串', whitespace_content: '纯空白', invalid_json: '非法 JSON', invalid_decision: '决策字段不合规',
 };
 export function business(trace: Trace): string {
+  if (trace.parsed_action === 'tools') return '调用工具';
   if (trace.status === 'error') return '调用异常';
   if (trace.parsed_action === 'retry') return '重试';
   if (trace.parsed_action === 'fallback') return '最终兜底';
@@ -62,7 +63,7 @@ export function describeContent(value: unknown): string | null {
 }
 export function chainWarning(round: Round): string | null {
   if (round.legacy) return '旧记录无轮次标识，作为独立调用展示。';
-  const attempts = round.calls.filter(call => call.operation === 'decision' && call.attempt).map(call => call.attempt!);
+  const attempts = round.calls.filter(call => ['decision', 'agent_step'].includes(call.operation ?? '') && call.attempt).map(call => call.attempt!);
   if (!attempts.length || !attempts.includes(1) || Math.max(...attempts) !== new Set(attempts).size)
     return '调用链可能不完整：部分记录未保留，或该轮仍在进行中。';
   return null;

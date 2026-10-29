@@ -3,6 +3,8 @@ from __future__ import annotations
 import os
 import re
 from dataclasses import dataclass
+from qq_group_chatter.agent.tools import ToolRegistry, setting
+from qq_group_chatter.services.deepseek_search import DeepSeekSearchClient
 from pathlib import Path
 from typing import Any
 
@@ -56,8 +58,11 @@ class ChatBotApplication:
     web_search: WebSearchService | None = None
     llm_trace_store: LLMTraceStore | None = None
     image_service: ImageUnderstandingService | None = None
+    tools: ToolRegistry | None = None
 
     async def start(self) -> None:
+        if self.tools is not None:
+            await self.tools.start()
         await self.long_term_memory.start()
         if self.conversation_archive is not None:
             await self.conversation_archive.start()
@@ -70,6 +75,8 @@ class ChatBotApplication:
                 await self.conversation_archive.stop()
             await self.long_term_memory.stop()
         finally:
+            if self.tools is not None:
+                await self.tools.stop()
             if self.image_service is not None:
                 await self.image_service.stop()
 
@@ -273,7 +280,16 @@ def create_default_application(
         if chat_llm is not None
         else create_deepseek_chat_llm(trace_store=llm_trace_store)
     )
-    web_search = create_default_web_search_service()
+    web_search = None
+    tools = ToolRegistry()
+    if _read_bool("WEB_SEARCH_ENABLED", True):
+        key = setting("DEEPSEEK_API_KEY", "")
+        if not key:
+            raise ValueError("DEEPSEEK_API_KEY is required when web search is enabled")
+        search = DeepSeekSearchClient(key, timeout_seconds=_read_float("WEB_SEARCH_TIMEOUT_SECONDS", 8))
+        for tool in search.tools():
+            tools.register(tool)
+    tools.load_config()
     long_term_memory = create_default_long_term_memory_service(
         mem0_client=mem0_client,
         planner_llm=planner_llm,
@@ -287,7 +303,7 @@ def create_default_application(
         short_term_memory=create_default_short_term_memory_service(),
         long_term_memory=long_term_memory,
         conversation_archive=conversation_archive,
-        chat_agent=ChatAgent(llm=resolved_chat_llm, json_output_enabled=_read_bool("CHAT_JSON_OUTPUT_ENABLED", False)),
+        chat_agent=ChatAgent(llm=resolved_chat_llm, tools=tools),
         web_search=web_search,
         image_service=image_service,
     )
@@ -298,6 +314,7 @@ def create_default_application(
         web_search=web_search,
         llm_trace_store=llm_trace_store,
         image_service=image_service,
+        tools=tools,
     )
 
 

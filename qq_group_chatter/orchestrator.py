@@ -162,6 +162,7 @@ class ChatOrchestrator:
                     context,
                 )
                 decision = await self._chat_agent.generate_reply(
+                    **({"on_search_start": on_search_start} if getattr(self._chat_agent, "tools", None) is not None else {}),
                     user_message=content,
                     context=context,
                     short_term_messages=short_term_messages,

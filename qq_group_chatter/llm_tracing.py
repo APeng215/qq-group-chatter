@@ -130,6 +130,7 @@ class LLMTraceStore:
         search_query: str | None = None,
         search_notice: str | None = None,
         validation_error: str | None = None,
+        tool_events: list[dict[str, Any]] | None = None,
     ) -> None:
         event = {
             "event": "result",
@@ -147,6 +148,8 @@ class LLMTraceStore:
             event["search_query"] = search_query
         if search_notice is not None:
             event["search_notice"] = search_notice
+        if tool_events is not None:
+            event["tool_events"] = tool_events
         self._append_event(event)
 
     def snapshot(self) -> dict[str, Any]:

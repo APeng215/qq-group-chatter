@@ -528,13 +528,13 @@ async def test_chat_agent_passes_trace_context_for_decision_call():
     assert "不要自称 AI、助手、模型或自动程序" in llm.calls[0]["system_prompt"]
     assert "不要输出或解释思考过程" in llm.calls[0]["system_prompt"]
     assert "根据当前会话上下文和长期记忆自然回复" in llm.calls[0]["system_prompt"]
-    assert "嗯，我知道了。" in llm.calls[0]["system_prompt"]
+    assert "普通闲聊无需工具" in llm.calls[0]["system_prompt"]
     assert "普通聊天回复" not in llm.calls[0]["system_prompt"]
     assert "给对方看的等待提示" not in llm.calls[0]["system_prompt"]
     assert "适合搜索的简洁查询词" not in llm.calls[0]["system_prompt"]
     assert "短期上下文是刚发生的对话" in llm.calls[0]["system_prompt"]
     assert "较早的会话长期记忆" not in llm.calls[0]["system_prompt"]
-    assert "你必须只输出一个 JSON 对象" in llm.calls[0]["system_prompt"]
+    assert "不要使用 action/reply/web_search JSON 决策封装" in llm.calls[0]["system_prompt"]
     assert "当前用户消息" not in llm.calls[0]["system_prompt"]
 
 

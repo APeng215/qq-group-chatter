@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 from time import time
+from qq_group_chatter.agent.tools import setting
+
+CHAT_KEYWORD_TRIGGER_ENABLED = setting("CHAT_KEYWORD_TRIGGER_ENABLED", "true").lower() not in {"0", "false", "off", "no"}
 from qq_group_chatter.models import PendingAssistantReply, ImageAttachment
 from qq_group_chatter.observability import record_error
 from qq_group_chatter.orchestrator import ChatOrchestrator
@@ -133,14 +136,33 @@ def _message_text_from_event(event) -> str:
 
 
 def _is_addressed_to_bot(event) -> bool:
-    if bool(getattr(event, "to_me", False)):
+    original = getattr(event, "original_message", None)
+    if original is not None:
+        parts = [str(_segment_value(_segment_value(s, "data") or {}, "text") or "")
+                 for s in original if _segment_value(s, "type") == "text"]
+        original_text = "".join(parts).lstrip()
+    else:
+        parts = [str(_segment_value(_segment_value(s, "data") or {}, "text") or "")
+                 for s in getattr(event, "message", []) if _segment_value(s, "type") == "text"]
+        original_text = "".join(parts).lstrip()
+    keyword = original_text.startswith("神奈")
+    if keyword and CHAT_KEYWORD_TRIGGER_ENABLED:
         return True
+    if bool(getattr(event, "to_me", False)):
+        if not keyword or CHAT_KEYWORD_TRIGGER_ENABLED:
+            return True
+        # Nickname preprocessing also sets to_me. Recover actual mentions
+        # from the original event and actual replies from normalized reply.
+        reply = getattr(event, "reply", None)
+        sender = _segment_value(reply, "sender") if reply is not None else None
+        if sender and str(_segment_value(sender, "user_id")) == str(getattr(event, "self_id", "")):
+            return True
     self_id = _optional_event_text(getattr(event, "self_id", None))
     if self_id is None:
         return False
     # The adapter may leave a mention in the middle of the message without
     # setting to_me; inspect every segment, but never treat @all as a bot mention.
-    for segment in getattr(event, "message", None) or []:
+    for segment in (list(getattr(event, "message", None) or []) + list(original or [])):
         if _segment_value(segment, "type") != "at":
             continue
         data = _segment_value(segment, "data") or {}

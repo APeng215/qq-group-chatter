@@ -1,0 +1,7 @@
+{
+  "python": [{"factory": "my_tools:create_tools", "enabled": false}],
+  "mcp": {
+    "local": {"enabled": false, "transport": "stdio", "command": "python", "args": ["path/to/server.py"], "env": {}},
+    "remote": {"enabled": false, "transport": "streamable_http", "url": "https://example.com/mcp", "headers": {"Authorization": "${MCP_AUTHORIZATION}"}}
+  }
+}

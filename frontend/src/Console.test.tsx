@@ -18,8 +18,8 @@ it('shows retry chain, preserves selected tab on refresh, copies complete round'
   Object.defineProperty(navigator, 'clipboard', {configurable: true, value: {writeText: write}});
   render(<Console/>);
   await screen.findByText('有效回复');
-  expect(screen.getByText('第1/3次', {exact: false})).toBeInTheDocument();
-  fireEvent.click(screen.getByText('第1/3次', {exact: false}));
+  expect(screen.getByText('第1步', {exact: false})).toBeInTheDocument();
+  fireEvent.click(screen.getByText('第1步', {exact: false}));
   expect(await screen.findByText(/纯空白：3 字符/)).toBeInTheDocument();
   fireEvent.click(screen.getByRole('tab', {name: '原始 response'}));
   fireEvent.click(screen.getByRole('button', {name: '刷新'}));

@@ -90,15 +90,14 @@ def test_chat_json_output_default_env_and_dotenv_wiring(monkeypatch):
     assert built._chat_agent.json_output_enabled is True
 
 
-def test_default_application_wires_web_search_when_tavily_key_exists(monkeypatch):
+def test_default_application_registers_deepseek_search_tools(monkeypatch):
     monkeypatch.setenv("DEEPSEEK_API_KEY", "secret")
-    monkeypatch.setenv("TAVILY_API_KEY", "tavily-secret")
     monkeypatch.setattr("qq_group_chatter.app.create_default_mem0_client", lambda **kwargs: NoopMem0Client())
 
     application = create_default_application()
 
-    assert application.web_search is not None
-    assert application.orchestrator._web_search is application.web_search
+    assert {"web_search", "web_fetch"} <= set(application.tools.tools)
+    assert application.orchestrator._chat_agent.tools is application.tools
 
 
 def test_default_application_wires_shared_llm_trace_store(monkeypatch):

@@ -14,7 +14,7 @@
 - `create_default_orchestrator()` 只用于测试或显式自定义装配；直接用它不会自动启动长期记忆 worker，也不会装配会话归档。
 - NoneBot 插件入口：`qq_group_chatter/plugins/chat.py`。
 - 主编排：`qq_group_chatter/orchestrator.py`。
-- 联网搜索服务：`qq_group_chatter/services/web_search.py`，由 `create_default_application()` 装配后注入 `ChatOrchestrator`。
+- 联网搜索服务：`qq_group_chatter/services/deepseek_search.py`，由 `create_default_application()` 注册为 Agent 工具。
 - 原始对话语义归档：`qq_group_chatter/services/conversation_archive.py`，由 `create_default_application()` 装配后注入 `ChatOrchestrator`。
 - 群聊和私聊都先构造成 `ConversationContext`。
 
@@ -31,7 +31,7 @@
 9. 把 assistant 回复写入短期记忆和原始对话语义归档
 10. 携带本轮长期记忆查询快照和原始对话语义归档快照，投递用户消息到长期记忆后台 ingestion
 
-联网搜索是普通聊天链路里的补充资料步骤：`ChatAgent` 先用 DeepSeek JSON Output 返回 `reply` 或 `web_search` 决策；如果是 `web_search`，`ChatOrchestrator` 先发送模型生成的 `notice`，再调用 `WebSearchService.search_sources()` 获取 Tavily 来源，最后回到 `ChatAgent.generate_grounded_search_reply()` 用神奈口吻回答。
+聊天使用单 Agent 工具调用循环；ChatAgent 自主决定直接回复或调用 Python/MCP 工具，程序执行并回传结果后继续判断。搜索通过 DeepSeek Search/Fetch 工具完成，每轮最多发送一次搜索提示。默认最多 8 次模型请求、12 次工具执行、单工具 20 秒、整轮 120 秒。
 
 长期记忆 planner 的事实来源只看本轮用户消息（文字及实际发送的本轮图片）；短期上下文及历史图片、原始对话语义归档和 assistant 回复只允许作为指代、确认、拒绝、限定上下文，不能作为独立记忆事实来源。长期记忆只保存文字，不保存图片或图片引用。
 
@@ -90,16 +90,16 @@
 - `.env` 本地使用且已 ignore；提交示例只改 `.env.example`。
 - `.mem0/` 是运行数据、本地长期记忆存储、原始对话语义归档和短期记忆持久化存储，可以保留用于加快下次运行或保留本地记忆；不要提交。
 
-## 联网搜索
+## 工具与联网搜索
 
-- 搜索入口在 `qq_group_chatter/services/web_search.py`；插件层不再拦截搜索触发词，所有消息都先进入普通聊天链路。
-- 即使用户说“搜一下/搜索/查一下”，也只是普通聊天内容；是否联网由 `ChatAgent` 的结构化 `web_search` 决策决定。不要重新新增 slash 命令或插件级硬搜索分支。
-- 默认搜索 provider 是 Tavily；`WEB_SEARCH_ENABLED=true` 时需要 `TAVILY_API_KEY`，否则搜索服务初始化会失败。
-- 默认 Tavily 参数：`WEB_SEARCH_DEPTH=basic`、`WEB_SEARCH_MAX_RESULTS=5`、`WEB_SEARCH_INCLUDE_RAW_CONTENT=markdown`、`WEB_SEARCH_INCLUDE_ANSWER=false`、`WEB_SEARCH_TIMEOUT_SECONDS=8`。
-- Tavily 只提供网页来源和 `raw_content`；自动搜索最终回复由 `ChatAgent` 基于 `chat_search_grounded.txt` 生成。
-- 自动搜索默认不向 prompt 暴露 URL；如需展示 URL，应先确认需求并更新 grounded prompt 与来源格式化逻辑。
-- 每条来源正文默认按 `WEB_SEARCH_MAX_RAW_CONTENT_CHARS_PER_RESULT=8000` 截断；prompt 里看到的是网页正文片段，不保证是完整页面。
-- 搜索上下文不写入长期记忆；搜索提示不写入短期记忆；最终搜索增强回复只在发送成功后作为 assistant 回复进入短期记忆。
+- 工具注册在 `qq_group_chatter/agent/tools.py`，循环在 `agent/tool_loop.py`；不引入 LangGraph/checkpointer，不把 Mem0 注册为工具。
+- `tools.json` 为本地配置，使用 `AGENT_TOOLS_CONFIG` 指定路径；提交示例为 `tools.example.json`，凭据只允许 `${ENV_VAR}` 引用。
+- Python 工厂 `module:factory` 返回 AgentTool 或其列表；MCP 支持 stdio / streamable_http，随应用生命周期管理。安装和启用由管理员负责。
+- DeepSeek Search/Fetch 分别调用 `/v1/tools/search` 和 `/v1/tools/fetch`，复用 `DEEPSEEK_API_KEY`；生产链路不依赖 Tavily、不自动回退。
+- `WEB_SEARCH_ENABLED=true` 默认注册 web_search/web_fetch；search count 默认 5、need_content=true；查询 1–128 字符。
+- 搜索正文默认每条 8000 字符，Fetch 正文默认 20000 字符，截断需标记；工具结果保留 URL 便于抓取，最终回复默认不展示 URL。
+- 搜索和工具结果不作为长期记忆事实来源；过程提示不入聊天记忆；最终回复发送成功后才记录。
+- 群聊默认支持文字开头呼唤“神奈”；`CHAT_KEYWORD_TRIGGER_ENABLED=false` 关闭关键词响应，保留 @、机器人引用和私聊行为；重启生效。
 
 ## 可观测性
 
