@@ -99,7 +99,7 @@
 - `WEB_SEARCH_ENABLED=true` 默认注册 web_search/web_fetch；search count 默认 5、need_content=true；查询 1–128 字符。
 - 搜索正文默认每条 8000 字符，Fetch 正文默认 20000 字符，截断需标记；工具结果保留 URL 便于抓取，最终回复默认不展示 URL。
 - 搜索和工具结果不作为长期记忆事实来源；过程提示不入聊天记忆；最终回复发送成功后才记录。
-- 群聊默认支持文字开头呼唤“神奈”；`CHAT_KEYWORD_TRIGGER_ENABLED=false` 关闭关键词响应，保留 @、机器人引用和私聊行为；重启生效。
+- 群聊默认支持文字任意位置提及“神奈”；`CHAT_KEYWORD_TRIGGER_ENABLED=false` 关闭关键词响应，保留 @、机器人引用和私聊行为；重启生效。
 
 ## 可观测性
 

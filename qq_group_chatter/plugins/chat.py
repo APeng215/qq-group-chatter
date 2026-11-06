@@ -145,7 +145,7 @@ def _is_addressed_to_bot(event) -> bool:
         parts = [str(_segment_value(_segment_value(s, "data") or {}, "text") or "")
                  for s in getattr(event, "message", []) if _segment_value(s, "type") == "text"]
         original_text = "".join(parts).lstrip()
-    keyword = original_text.startswith("神奈")
+    keyword = "神奈" in original_text
     if keyword and CHAT_KEYWORD_TRIGGER_ENABLED:
         return True
     if bool(getattr(event, "to_me", False)):

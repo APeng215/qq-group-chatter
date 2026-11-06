@@ -103,9 +103,12 @@ def test_keyword_switch_and_preprocessed_events(monkeypatch):
             to_me=to_me, original_message=original if original is not None else message)
     monkeypatch.setattr(chat, "CHAT_KEYWORD_TRIGGER_ENABLED", True)
     assert chat.should_reply_to_message(event("  神奈在吗"))
-    assert not chat.should_reply_to_message(event("我觉得神奈很可爱"))
+    assert chat.should_reply_to_message(event("我觉得神奈很可爱"))
+    assert chat.should_reply_to_message(event("你怎么看，神奈"))
+    assert not chat.should_reply_to_message(event("大家在吗"))
     monkeypatch.setattr(chat, "CHAT_KEYWORD_TRIGGER_ENABLED", False)
     assert not chat.should_reply_to_message(event("神奈在吗"))
+    assert not chat.should_reply_to_message(event("我觉得神奈很可爱"))
     original = [{"type": "text", "data": {"text": "神奈在吗"}}]
     assert not chat.should_reply_to_message(event("在吗", to_me=True, original=original))
     original.insert(0, {"type": "at", "data": {"qq": "123"}})

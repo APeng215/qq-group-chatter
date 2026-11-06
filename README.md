@@ -173,7 +173,7 @@ NapCat 推送的图片消息会携带图片信息。机器人只使用事件中�
 搜索使用 DeepSeek 官方 Search/Fetch API，复用 `DEEPSEEK_API_KEY`，不再需要 Tavily 密钥。
 `WEB_SEARCH_ENABLED=false` 同时禁用搜索和抓取工具。搜索正文默认每条 8000 字符，Fetch 默认 20000 字符。
 
-群聊中“神奈在吗”“神奈，查一下”会触发；“我觉得神奈很可爱”不会触发。
+群聊消息文字任意位置包含“神奈”都会触发，例如“神奈在吗”“我觉得神奈很可爱”“你怎么看，神奈”。
 设置 `CHAT_KEYWORD_TRIGGER_ENABLED=false` 关闭关键词唤醒，@ 和私聊仍有效。配置修改后重启。
 
 工具配置：首次部署复制 `tools.example.json` 为本地 `tools.json`，或通过 `AGENT_TOOLS_CONFIG` 指定路径。
