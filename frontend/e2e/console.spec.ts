@@ -15,9 +15,35 @@ const traces: Trace[] = [
   {trace_id: 'planner-call', round_id: 'round-a', component: 'memory_planner', operation: 'plan_memory', status: 'success', created_at: '2026-10-26T01:00:02Z'},
 ];
 test.beforeEach(async ({page}) => {
+  await page.route('**/api/todo', route => route.fulfill({json: {content: '# TODO\n\n- [ ] 图片编号不应出现在群聊回复中\n  - 群友没有内部图片编号的概念。', exists: true}}));
+  await page.route('**/api/prompts', route => route.fulfill({json: {
+    groups: [{key: 'chat', title: '普通聊天', system: '神奈的完整系统提示词\n' + '上下文规则。'.repeat(80), user: '当前用户消息：{user_message}'}],
+    source: {'chat_agent_system.txt': '文件中的原始提示词'}, errors: [],
+  }}));
   await page.route('**/api/llm-traces', route => route.fulfill({json: {traces, image_understanding: {enabled: true, max_images_per_request: 4}}}));
   await page.route('**/api/memory', route => route.fulfill({json: {summary: {total: 1, user: 1, queue_size: 0}, memories: [{id: 'test-memory', content: '喜欢咖啡', scope: 'user', kind: 'preference', metadata: {source: 'fake'}, history: [{event: 'ADD'}]}]}}));
   await page.route('**/api/images?*', route => route.request().url().includes(resource) ? route.fulfill({contentType: 'image/png', body: Buffer.from(png, 'base64')}) : route.fulfill({status: 404, body: '图片已不可用'}));
+});
+test('todo displays local notes and refreshes on desktop and mobile', async ({page}, info) => {
+  await page.goto('/console-assets/');
+  await page.getByRole('tab', {name: 'TODO', exact: true}).click();
+  await expect(page.getByText('图片编号不应出现在群聊回复中', {exact: false})).toBeVisible();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+  await page.screenshot({path: info.outputPath('todo.png'), fullPage: true, animations: 'disabled'});
+  await page.route('**/api/todo', route => route.fulfill({json: {content: '- [x] 已更新', exists: true}}));
+  await page.getByRole('button', {name: '刷新 TODO'}).click();
+  await expect(page.getByText('- [x] 已更新', {exact: true})).toBeVisible();
+});
+test('prompt templates fit console styling on desktop and mobile', async ({page}, info) => {
+  await page.goto('/console-assets/');
+  await page.getByRole('tab', {name: '提示词', exact: true}).click();
+  await expect(page.getByText('神奈的完整系统提示词', {exact: false})).toBeVisible();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+  await page.screenshot({path: info.outputPath('prompts.png'), fullPage: true, animations: 'disabled'});
+  await page.getByRole('tab', {name: '文件 · 原始区块'}).click();
+  await expect(page.getByText('文件中的原始提示词', {exact: true})).toBeVisible();
+  await page.getByRole('button', {name: '查看真实调用上下文'}).click();
+  await expect(page.getByRole('tab', {name: 'LLM 控制台', exact: true})).toHaveAttribute('aria-selected', 'true');
 });
 test('console round, retry, raw content, preview, export, refresh and library', async ({page}, info) => {
   const errors: string[] = [];

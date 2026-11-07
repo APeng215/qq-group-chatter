@@ -24,6 +24,12 @@ def setup_memory_dashboard(driver: Any, application: Any) -> None:
         name="qq_group_chatter_console_assets",
     )
 
+    driver.setup_http_server(
+        HTTPServerSetup(
+            path=URL("/api/todo"), method="GET", name="qq_group_chatter_todo_api",
+            handle_func=lambda request: todo_api(),
+        )
+    )
     for path, name in (
         ("/console", "qq_group_chatter_console_dashboard"),
         ("/memory", "qq_group_chatter_memory_dashboard"),
@@ -36,6 +42,12 @@ def setup_memory_dashboard(driver: Any, application: Any) -> None:
                 handle_func=lambda request: memory_dashboard_response(application),
             )
         )
+    driver.setup_http_server(
+        HTTPServerSetup(
+            path=URL("/api/prompts"), method="GET", name="qq_group_chatter_prompts_api",
+            handle_func=lambda request: prompts_api(),
+        )
+    )
     driver.setup_http_server(
         HTTPServerSetup(
             path=URL("/api/memory"),
@@ -66,6 +78,58 @@ def setup_memory_dashboard(driver: Any, application: Any) -> None:
             handle_func=lambda request: image_preview_api(application, request.url.query.get("resource_id", "")),
         )
     )
+
+
+TODO_PATH = Path(__file__).resolve().parents[1] / "todo" / "todo.md"
+
+
+async def todo_api() -> Any:
+    from nonebot.drivers import Response
+
+    try:
+        content = await asyncio.to_thread(TODO_PATH.read_text, encoding="utf-8")
+        snapshot = {"content": content, "exists": True}
+        status = 200
+    except FileNotFoundError:
+        snapshot = {"content": "", "exists": False}
+        status = 200
+    except OSError:
+        snapshot = {"error": "无法读取 TODO 文件"}
+        status = 500
+    return Response(status, headers={"content-type": "application/json; charset=utf-8", "cache-control": "no-store"},
+                    content=json.dumps(snapshot, ensure_ascii=False))
+
+
+def build_prompts_snapshot() -> dict[str, Any]:
+    from importlib.resources import files
+    from qq_group_chatter.prompt_loader import parse_prompt_bundle
+    from qq_group_chatter.agent.chat_agent import (
+        CHAT_AGENT_SYSTEM_PROMPT, CHAT_AGENT_PROMPT_TEMPLATE,
+        CHAT_SEARCH_GROUNDED_SYSTEM_PROMPT, CHAT_SEARCH_GROUNDED_PROMPT_TEMPLATE,
+        ERROR_NOTICE_PROMPT_TEMPLATE,
+    )
+    from qq_group_chatter.services.long_term_memory_planner import PLANNER_SYSTEM_PROMPT, PLANNER_PROMPT_TEMPLATE
+
+    groups = [
+        {"key": "chat", "title": "普通聊天", "system": CHAT_AGENT_SYSTEM_PROMPT, "user": CHAT_AGENT_PROMPT_TEMPLATE},
+        {"key": "search", "title": "搜索增强（兼容路径）", "system": CHAT_SEARCH_GROUNDED_SYSTEM_PROMPT, "user": CHAT_SEARCH_GROUNDED_PROMPT_TEMPLATE},
+        {"key": "planner", "title": "长期记忆 Planner", "system": PLANNER_SYSTEM_PROMPT, "user": PLANNER_PROMPT_TEMPLATE},
+        {"key": "notice", "title": "记忆异常通知", "system": CHAT_AGENT_SYSTEM_PROMPT, "user": ERROR_NOTICE_PROMPT_TEMPLATE},
+    ]
+    errors = []
+    try:
+        source = parse_prompt_bundle(files("qq_group_chatter").joinpath("prompts", "prompts.md").read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        source = {}
+        errors.append(f"无法读取提示词文件：{type(exc).__name__}")
+    return {"groups": groups, "source": source, "errors": errors}
+
+
+async def prompts_api() -> Any:
+    from nonebot.drivers import Response
+    snapshot = await asyncio.to_thread(build_prompts_snapshot)
+    return Response(200, headers={"content-type": "application/json; charset=utf-8", "cache-control": "no-store"},
+                    content=json.dumps(snapshot, ensure_ascii=False))
 
 
 def _read_bool(env_name: str, default: bool) -> bool:

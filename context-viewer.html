@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="zh-CN">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>神奈 · Context 查看器</title>
+<style>
+*{box-sizing:border-box}body{margin:0;background:#f4f6fa;color:#25324a;font:15px/1.7 system-ui,"Microsoft YaHei",sans-serif}header{background:#fff;padding:24px 4vw;border-bottom:1px solid #dce2ed}h1{font-size:24px;margin:0}p{margin:8px 0;color:#59677e}button,select,input{font:inherit;border:1px solid #cbd5e5;border-radius:7px;background:white;padding:7px 12px;color:inherit}button{cursor:pointer}button:hover{background:#eaf1ff}button.active{background:#eaf1ff;border-color:#5684cf}nav{display:flex;gap:10px;flex-wrap:wrap;margin-top:16px}main{padding:20px 4vw;display:grid;grid-template-columns:310px minmax(0,1fr);gap:22px}aside{max-height:76vh;overflow:auto}aside button{display:block;width:100%;text-align:left;margin-bottom:8px;overflow-wrap:anywhere}article{min-width:0}section{padding:18px;background:#fff;border:1px solid #dce2ed;border-radius:9px;margin-bottom:14px}h2{font-size:18px;margin:0 0 10px}h3{font-size:14px;color:#4266a0}pre{white-space:pre-wrap;overflow-wrap:anywhere;font:14px/1.8 Consolas,"Microsoft YaHei",monospace;margin:0}small{color:#66748b}#status{min-height:28px}label{display:inline-flex;gap:6px;align-items:center}@media(max-width:800px){main{grid-template-columns:1fr}aside{max-height:240px}}
+</style>
+<header>
+<h1>神奈 · Context 查看器</h1>
+<p>本地查看提示词模板与真实 LLM 请求。选择项目目录后每 2 秒刷新，无需启动服务，文件内容不会上传。</p>
+<nav><button id="directory">选择项目目录</button><button id="restore" hidden>恢复目录访问</button><button id="forget" hidden>忘记项目目录</button><button id="traceFile">选择其他 trace 文件</button><button id="importButton">导入快照</button><input id="importFile" type="file" accept=".jsonl,.json,.md" hidden><button id="templates">提示词模板</button><button id="calls">真实调用</button><label><input id="follow" type="checkbox" checked>跟随最新调用</label></nav>
+<p id="status" role="status">请用 Edge / Chrome 打开，选择 qq-group-chatter 项目目录。首次选择需要浏览器授权只读访问。</p>
+<small>真实调用来自 logs/llm-traces.jsonl（可另选自定义路径）。无新请求时显示上次调用；模板修改需重启机器人，运行中进程可能仍使用旧模板。其他浏览器可导入快照，快照不会自动更新。</small>
+<p><small>项目目录会保存在当前浏览器，下次自动恢复。若读取权限过期，只需点击“恢复目录访问”，无需重新选目录。清除浏览器数据、更换浏览器或移动本页面后可能需要重新选择。</small></p>
+</header>
+<main><aside id="list" aria-label="提示词或调用列表"></aside><article id="detail"><section>选择项目目录后，在这里查看完整 system / user 模板，或实际请求中的逐条 messages。</section></article></main>
+<script>
+'use strict';
+let root, traceHandle, prompts={}, traces=[], selected='', mode='templates', busy=false;
+let savedRoot;
+const $=id=>document.getElementById(id);
+const status=t=>$('status').textContent=t;
+// FileSystemHandle must be structured-cloned through IndexedDB, not JSON/localStorage.
+async function selectionStore(action, value){
+  const db=await new Promise((resolve,reject)=>{
+    const request=indexedDB.open('kanna-context-viewer',1);
+    request.onupgradeneeded=()=>request.result.createObjectStore('settings');
+    request.onsuccess=()=>resolve(request.result);
+    request.onerror=()=>reject(request.error);
+  });
+  try{return await new Promise((resolve,reject)=>{
+    const transaction=db.transaction('settings',action==='get'?'readonly':'readwrite');
+    const store=transaction.objectStore('settings');
+    const request=action==='get'?store.get('project'):action==='delete'?store.delete('project'):store.put(value,'project');
+    transaction.oncomplete=()=>resolve(request.result);
+    transaction.onerror=()=>reject(transaction.error);
+    transaction.onabort=()=>reject(transaction.error||Error('保存目录失败'));
+  })}finally{db.close()}
+}
+function selectionButtons(){
+  $('directory').textContent=savedRoot?'更换项目目录':'选择项目目录';
+  $('forget').hidden=!savedRoot;
+  $('restore').hidden=!savedRoot||!!root;
+}
+async function restoreSelection(requestPermission=false){
+  if(!savedRoot)return;
+  try{
+    let permission=await savedRoot.queryPermission({mode:'read'});
+    if(permission!=='granted'&&requestPermission)permission=await savedRoot.requestPermission({mode:'read'});
+    if(permission==='granted'){root=savedRoot;traceHandle=undefined;selectionButtons();await refresh()}
+    else{root=undefined;selectionButtons();status(`已记住项目 ${savedRoot.name}，请点击“恢复目录访问”授权，无需重新选择目录。`)}
+  }catch(e){root=undefined;selectionButtons();status('无法恢复已保存目录，请恢复访问或更换项目目录：'+e.message)}
+}
+async function initializeSelection(){
+  try{savedRoot=await selectionStore('get');selectionButtons();await restoreSelection()}
+  catch(e){status('浏览器暂不能保存或恢复目录，本次仍可手动选择：'+e.message)}
+}
+function parsePrompts(text){const result={};for(const match of text.matchAll(/^<!-- prompt: ([\w.-]+) -->\r?\n([\s\S]*?)\r?\n<!-- \/prompt -->$/gm))result[match[1]]=match[2].trim();if(!Object.keys(result).length)throw Error('未找到提示词区块');return result}
+function parseTraces(text){let records=new Map(),bad=0;const lines=text.trim().startsWith('[')?JSON.parse(text):text.split(/\r?\n/).filter(x=>x.trim()).flatMap(x=>{try{return [JSON.parse(x)]}catch{bad++;return []}});for(const event of lines){if(!event||!event.trace_id)continue;records.set(event.trace_id,{...records.get(event.trace_id),...event})}return {traces:[...records.values()].reverse(),bad}}
+function block(title,value){const section=document.createElement('section'),h=document.createElement('h2'),pre=document.createElement('pre');h.textContent=title;pre.textContent=typeof value==='string'?value:JSON.stringify(value,null,2);section.append(h,pre);$('detail').append(section)}
+function expanded(name){let text=prompts[name]||'';for(const [key,file] of [['bot_identity_prompt','bot_identity.txt'],['chat_context_rules','chat_context_rules.txt']])text=text.replaceAll('{'+key+'}',prompts[file]||'{'+key+'}');return text}
+function show(){const items=mode==='templates'?[['chat','普通聊天 · 完整模板'],['search','搜索增强 · 完整模板'],['planner','长期记忆 Planner'],...Object.keys(prompts).map(n=>[n,n])]:traces.map(t=>[t.trace_id,`${t.created_at||''}\n${t.component||''} / ${t.operation||''} · 第 ${t.attempt||1} 步 · ${t.status||''}\n${(t.current_user_message||'').slice(-100)}`]);
+if(mode==='calls'&&$('follow').checked&&items.length)selected=items[0][0];if(!items.some(i=>i[0]===selected))selected=items[0]?.[0]||'';
+$('list').replaceChildren();for(const [id,title] of items){const b=document.createElement('button');b.textContent=title;b.className=id===selected?'active':'';b.onclick=()=>{selected=id;if(mode==='calls')$('follow').checked=false;show()};$('list').append(b)}
+$('detail').replaceChildren();if(!selected){block('暂无数据',mode==='calls'?'还没有读取到调用。请确认机器人已经发起请求、trace 已启用且选择了正确文件。':'请选择项目目录，或导入 prompts.md。');return}
+if(mode==='templates'){if(['chat','search'].includes(selected)){const search=selected==='search';block('system · 已展开身份与上下文规则',expanded('deepseek_system.txt')+'\n'+expanded(search?'chat_search_grounded_system.txt':'chat_agent_system.txt'));block('user · 动态占位符模板',prompts[search?'chat_search_grounded.txt':'chat_agent.txt']);block('动态请求说明','占位符在运行时填入真实历史、记忆、时间、发言者及当前消息。图片以独立 content blocks 发送；后续工具轮还会加入 assistant / tool 消息。请切到“真实调用”查看具体请求。')}else if(selected==='planner'){block('system',prompts['long_term_memory_planner_system.txt']);block('user · 动态占位符模板',prompts['long_term_memory_planner.txt'])}else block(selected,prompts[selected]);return}
+const t=traces.find(t=>t.trace_id===selected);block('调用信息',{trace_id:t.trace_id,round_id:t.round_id,created_at:t.created_at,component:t.component,operation:t.operation,attempt:t.attempt,status:t.status,model:t.model,thinking:t.thinking});
+for(const [i,message] of (t.messages||[]).entries()){block(`${i+1} · ${message.role||'未知角色'}${message.tool_call_id?' · '+message.tool_call_id:''}`,message.content??'');const extra={...message};delete extra.content;delete extra.role;if(Object.keys(extra).length)block('消息附加字段（含工具调用）',extra)}
+if(t.image_context)block('图片上下文（trace 中的元数据，不含 Base64）',t.image_context);
+block('完整 trace（含工具事件与响应）',t);
+}
+async function child(directory,parts){for(const p of parts.slice(0,-1))directory=await directory.getDirectoryHandle(p);return directory.getFileHandle(parts.at(-1))}
+async function refresh(){if(busy||(!root&&!traceHandle))return;busy=true;const errors=[];try{if(root){try{const h=await child(root,['qq_group_chatter','prompts','prompts.md']);prompts=parsePrompts(await (await h.getFile()).text())}catch(e){errors.push('模板：'+e.message)}}try{const h=traceHandle||await child(root,['logs','llm-traces.jsonl']);const parsed=parseTraces(await (await h.getFile()).text());traces=parsed.traces;if(parsed.bad)errors.push(`${parsed.bad} 行暂未解析，下次刷新重试`)}catch(e){errors.push('trace：'+e.message)}show();status(`本地读取 ${new Date().toLocaleTimeString()} · ${Object.keys(prompts).length} 个模板 · ${traces.length} 次调用${errors.length?' · '+errors.join('；'):''}`)}finally{busy=false}}
+$('directory').onclick=async()=>{try{if(!window.showDirectoryPicker)throw Error('当前浏览器不支持实时读取，请用 Edge / Chrome，或导入快照');root=await window.showDirectoryPicker({mode:'read',id:'kanna-project',startIn:savedRoot||'documents'});savedRoot=root;traceHandle=undefined;selectionButtons();let saveError;try{await selectionStore('put',savedRoot)}catch(e){saveError=e}await refresh();if(saveError)status('目录已打开，但浏览器无法记住该目录：'+saveError.message)}catch(e){status(e.name==='AbortError'?'已取消选择':e.message)}};
+$('restore').onclick=()=>restoreSelection(true);
+$('forget').onclick=async()=>{try{await selectionStore('delete');savedRoot=root=traceHandle=undefined;prompts={};traces=[];selectionButtons();show();status('已忘记项目目录；本地项目文件未更改。')}catch(e){status('无法清除保存的目录：'+e.message)}};
+$('traceFile').onclick=async()=>{try{if(!window.showOpenFilePicker)throw Error('当前浏览器请使用“导入快照”');[traceHandle]=await window.showOpenFilePicker();mode='calls';await refresh()}catch(e){status(e.name==='AbortError'?'已取消选择':e.message)}};
+$('importButton').onclick=()=>$('importFile').click();
+$('importFile').onchange=async e=>{const file=e.target.files[0];if(!file)return;try{root=undefined;traceHandle=undefined;const text=await file.text();if(file.name.endsWith('.md')){prompts=parsePrompts(text);mode='templates'}else{const parsed=parseTraces(text);traces=parsed.traces;mode='calls';if(parsed.bad)throw Error(`有 ${parsed.bad} 行格式错误，请重新选择完整 trace 文件`)}show();status('快照：'+file.name+' · 不会自动更新')}catch(e){status('导入失败：'+e.message)}finally{e.target.value=''}};
+$('templates').onclick=()=>{mode='templates';show()};$('calls').onclick=()=>{mode='calls';show()};$('follow').onchange=show;
+setInterval(refresh,2000);
+void initializeSelection();
+</script>
+</html>

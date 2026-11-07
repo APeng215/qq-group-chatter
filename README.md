@@ -372,4 +372,6 @@ python -m pip install -e .
 - 长期记忆 planner：`qq_group_chatter/services/long_term_memory_planner.py`
 - 原始对话语义归档：`qq_group_chatter/services/conversation_archive.py`
 - 联网搜索：`qq_group_chatter/services/deepseek_search.py`
-- Prompt 文件：`qq_group_chatter/prompts/`
+- Prompt 全集（运行时唯一来源）：`qq_group_chatter/prompts/prompts.md`，各区块正文保持原样，区块外的说明不会发给模型；修改后重启机器人。
+- 运行控制台 `/console` 的“提示词”页签直接读取后端，无需选择本地目录：分别展示当前进程已加载的完整 system / user 模板与磁盘文件区块，支持复制、手动刷新和每 5 秒自动刷新。真实请求中的动态上下文仍在 LLM 控制台的“请求上下文”中查看。
+- 本地 Context 查看器：双击根目录 `context-viewer.html`，用 Edge / Chrome 选择项目根目录，无需部署或启动服务。页面每 2 秒读取提示词与 `logs/llm-traces.jsonl`，可查看展开后的 system 模板、user 模板，以及真实调用的逐条 messages、图片元数据和工具事件。自定义 trace 路径可通过“选择其他 trace 文件”指定；其他浏览器可导入文件快照（不会自动刷新）。真实调用来自已记录请求，不是下一轮尚未生成的上下文；trace 关闭或没有新请求时不会出现新内容。查看器只在本地读取，不上传内容；图片 Base64 和未被 trace 记录的请求字段不在此视图内。

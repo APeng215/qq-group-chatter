@@ -1,8 +1,0 @@
-相关个人长期记忆（当前发言者 QQ号：{current_user_qq}，昵称：{current_user_nickname}）：
-{user_memory_lines}
-
-相关会话长期记忆：
-{conversation_memory_lines}
-
-当前 conversation 内相关长期记忆（只作为当前会话背景；不要把其他人的信息误当成当前发言者自己的信息）：
-{global_memory_lines}

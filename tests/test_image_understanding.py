@@ -267,6 +267,11 @@ async def test_full_chat_search_ingestion_share_snapshot_and_trace_has_no_base64
     image_blocks = [call["messages"][1]["content"][1:] for call in calls]
     assert image_blocks[0] == image_blocks[1] == image_blocks[2]
     assert image_blocks[0][0] == {"type": "text", "text": "图1"}
+    # The rule must reach both chat requests (including the tool follow-up),
+    # while image labels remain intact for image/message association.
+    for call in client.calls:
+        assert "这些编号是内部图片索引，群友看不到" in call["messages"][0]["content"]
+        assert "只有用户自己明确使用的编号或图片中可见的编号" in call["messages"][0]["content"]
     assert image_blocks[0][1]["image_url"]["url"].startswith("data:image/png;base64,")
     traces = store.snapshot()["traces"]
     assert all(t["image_context"]["sent_count"] == 1 for t in traces)

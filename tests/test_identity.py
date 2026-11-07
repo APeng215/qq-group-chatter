@@ -1,14 +1,15 @@
 from pathlib import Path
 
 from qq_group_chatter.agent.identity import BOT_IDENTITY_PROMPT, load_bot_identity_prompt
-from qq_group_chatter.prompt_loader import load_prompt
+from qq_group_chatter.prompt_loader import load_prompt, parse_prompt_bundle
+
+
+def prompt_bundle():
+    return parse_prompt_bundle(Path("qq_group_chatter/prompts/prompts.md").read_text(encoding="utf-8"))
 
 
 def test_bot_identity_prompt_is_loaded_from_prompt_file():
-    prompt_path = Path("qq_group_chatter/prompts/bot_identity.txt")
-
-    assert prompt_path.exists()
-    assert load_bot_identity_prompt() == prompt_path.read_text(encoding="utf-8").strip()
+    assert load_bot_identity_prompt() == prompt_bundle()["bot_identity.txt"]
     assert BOT_IDENTITY_PROMPT == load_bot_identity_prompt()
 
 
@@ -24,8 +25,6 @@ def test_prompt_files_are_loaded_from_prompt_directory():
         "long_term_memory_planner.txt",
         "long_term_memory_planner_system.txt",
         "long_term_memory_section.txt",
+        "memory_error_notice.txt",
     ]:
-        prompt_path = Path("qq_group_chatter/prompts") / name
-
-        assert prompt_path.exists()
-        assert load_prompt(name) == prompt_path.read_text(encoding="utf-8").strip()
+        assert load_prompt(name) == prompt_bundle()[name]
